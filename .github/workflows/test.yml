@@ -31,8 +31,8 @@ jobs:
         python -m pip install --upgrade pip
         pip install -r requirements.txt
     
-    - name: Run linting with ruff (GitHub Annotations)
-      run: ruff check . --format=github
+    - name: Run linting with ruff
+      run: ruff check . --output-format=github
       continue-on-error: true
     
     - name: Run tests with pytest
