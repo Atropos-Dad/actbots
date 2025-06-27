@@ -50,9 +50,9 @@ class MemoryConfig:
                 }
             },
             "embedder": {
-                "provider": "sentence_transformers",
+                "provider": "openai",
                 "config": {
-                    "model": "all-MiniLM-L6-v2"
+                    "model": "text-embedding-3-small"
                 }
             }
         }
@@ -129,9 +129,9 @@ class MemoryConfig:
                 }
             },
             "llm": {
-                "provider": "google",
+                "provider": "openai",
                 "config": {
-                    "model": llm_model,
+                    "model": "gpt-4o-mini",
                     "temperature": 0.1,
                 }
             },
@@ -322,3 +322,38 @@ def get_anthropic_config(**kwargs) -> Dict[str, Any]:
 def get_recommended_config() -> Dict[str, Any]:
     """Get recommended configuration based on available API keys."""
     return MemoryConfig.get_recommended_config()
+
+
+def get_test_config(collection_name: str = "test_memory") -> Dict[str, Any]:
+    """
+    Test configuration that works without real API keys.
+    Uses in-memory ChromaDB to avoid conflicts.
+    
+    Args:
+        collection_name: Unique collection name for the test
+        
+    Returns:
+        Configuration dict for testing
+    """
+    return {
+        "vector_store": {
+            "provider": "chroma",
+            "config": {
+                "collection_name": collection_name,
+                # No path specified = in-memory storage
+            }
+        },
+        "llm": {
+            "provider": "openai",
+            "config": {
+                "model": "gpt-4o-mini",
+                "temperature": 0.1,
+            }
+        },
+        "embedder": {
+            "provider": "openai",
+            "config": {
+                "model": "text-embedding-3-small"
+            }
+        }
+    }

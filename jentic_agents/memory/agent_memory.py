@@ -100,18 +100,21 @@ class AgentMemory(BaseMemory):
         
         # Initialize Mem0
         with Timer("Initialize Mem0"):
+            # Set API key in environment if provided
             if api_key:
                 logger.info("Using Mem0 Platform with API key")
+                # Set appropriate API keys based on providers in config
+                self._set_provider_api_keys(config, api_key)
                 # Disable telemetry if requested
                 if not enable_telemetry:
                     os.environ["MEM0_TELEMETRY"] = "false"
-                self.memory = Memory(api_key=api_key)
             else:
                 logger.info("Using Mem0 local deployment")
                 # Disable telemetry if requested
                 if not enable_telemetry:
                     os.environ["MEM0_TELEMETRY"] = "false"
-                self.memory = Memory.from_config(config)
+            
+            self.memory = Memory.from_config(config)
         
         self.config = config
         self.api_key = api_key
@@ -125,6 +128,27 @@ class AgentMemory(BaseMemory):
         embedder_provider = config.get("embedder", {}).get("provider", "")
         
         return llm_provider in cloud_providers or embedder_provider in cloud_providers
+    
+    def _set_provider_api_keys(self, config: Dict[str, Any], api_key: str) -> None:
+        """Set appropriate environment variables based on providers in config."""
+        llm_provider = config.get("llm", {}).get("provider", "")
+        embedder_provider = config.get("embedder", {}).get("provider", "")
+        
+        # Map providers to their environment variable names
+        provider_env_vars = {
+            "openai": "OPENAI_API_KEY",
+            "google": "GOOGLE_API_KEY", 
+            "anthropic": "ANTHROPIC_API_KEY",
+            "huggingface": "HUGGINGFACE_API_KEY"
+        }
+        
+        # Set environment variables for providers that need API keys
+        providers_used = {llm_provider, embedder_provider}
+        for provider in providers_used:
+            if provider in provider_env_vars:
+                env_var = provider_env_vars[provider]
+                os.environ[env_var] = api_key
+                logger.debug(f"Set {env_var} for {provider} provider")
     
     def add(
         self,

@@ -16,7 +16,7 @@ class TestInteractiveCLIAgent:
     def setup_method(self):
         """Set up test fixtures"""
         self.reasoner = Mock()
-        self.memory = AgentMemory()
+        self.memory = AgentMemory(use_recommended=True)
         self.jentic_client = Mock(spec=JenticClient)
         
         # Create a sample reasoning result
