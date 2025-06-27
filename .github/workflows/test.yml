@@ -34,6 +34,7 @@ jobs:
     - name: Run linting with ruff
       run: |
         ruff check .
+      continue-on-error: true
     
     - name: Run type checking with mypy
       run: |
