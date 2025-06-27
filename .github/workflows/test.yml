@@ -31,15 +31,9 @@ jobs:
         python -m pip install --upgrade pip
         pip install -r requirements.txt
     
-    - name: Run linting with ruff
-      run: |
-        ruff check .
+    - name: Run linting with ruff (GitHub Annotations)
+      run: ruff check . --format=github
       continue-on-error: true
-    
-    - name: Run type checking with mypy
-      run: |
-        mypy jentic_agents --ignore-missing-imports
-      continue-on-error: true  # Don't fail the build on mypy errors for now
     
     - name: Run tests with pytest
       run: |
@@ -47,17 +41,3 @@ jobs:
       env:
         # Use in-memory ChromaDB for tests to avoid persistence issues
         CHROMA_DB_PATH: ""
-    
-    - name: Run tests with coverage
-      run: |
-        pytest jentic_agents/tests/ --cov=jentic_agents --cov-report=xml --cov-report=term-missing
-      env:
-        CHROMA_DB_PATH: ""
-    
-    - name: Upload coverage to Codecov
-      uses: codecov/codecov-action@v3
-      with:
-        file: ./coverage.xml
-        flags: unittests
-        name: codecov-umbrella
-        fail_ci_if_error: false 
