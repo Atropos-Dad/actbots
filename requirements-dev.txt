@@ -1,0 +1,5 @@
+# Development/quality dependencies
+pytest>=8.0
+pytest-mock
+ruff            # fast linter/formatter
+mypy 
