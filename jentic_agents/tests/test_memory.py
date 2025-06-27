@@ -5,6 +5,7 @@ Test cases for memory implementations.
 import sys
 import os
 import pytest
+import uuid
 
 # Add the package to the path
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', '..'))
@@ -157,12 +158,17 @@ class TestVectorStoreMemory:
     
     def setup_method(self):
         """Set up a fresh memory instance for each test."""
-        self.memory = VectorStoreMemory(collection_name="test_collection")
+        # Use a unique collection name for each test to avoid conflicts
+        unique_name = f"test_collection_{uuid.uuid4().hex[:8]}"
+        self.memory = VectorStoreMemory(collection_name=unique_name)
     
     def teardown_method(self):
         """Clean up after each test."""
-        self.memory.clear()
-        self.memory.close()
+        try:
+            self.memory.clear()
+            self.memory.close()
+        except:
+            pass  # Ignore cleanup errors
     
     def test_initialization(self):
         """Test that memory initializes correctly."""
@@ -340,9 +346,10 @@ def test_vector_store_memory_integration():
     print("🚀 Testing VectorStoreMemory Integration")
     print("=" * 50)
     
-    # Initialize memory
+    # Initialize memory with unique collection name
     print("Initializing VectorStoreMemory...")
-    memory = VectorStoreMemory(collection_name="integration_test")
+    unique_name = f"integration_test_{uuid.uuid4().hex[:8]}"
+    memory = VectorStoreMemory(collection_name=unique_name)
     
     # Test basic storage and retrieval
     print("\n📝 Testing basic store/retrieve operations:")

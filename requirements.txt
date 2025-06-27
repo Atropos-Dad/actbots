@@ -3,9 +3,11 @@
 openai>=1.0
 pydantic>=2.0
 litellm
+chromadb>=0.4.0
 
 # dev / quality
 pytest>=8.0
 pytest-mock
+pytest-cov
 ruff            # fast linter/formatter
 mypy
