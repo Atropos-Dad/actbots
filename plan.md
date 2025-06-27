@@ -87,7 +87,6 @@ jentic_agents/
 │
 ├─ memory/
 │   ├─ base_memory.py
-│   ├─ scratch_pad.py
 │   └─ vector_memory.py          # (optional, future)
 │
 ├─ inbox/

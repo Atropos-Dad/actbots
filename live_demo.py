@@ -32,7 +32,7 @@ sys.path.insert(0, os.path.dirname(__file__))
 
 from jentic_agents.agents.interactive_cli_agent import InteractiveCLIAgent
 from jentic_agents.inbox.cli_inbox import CLIInbox
-from jentic_agents.memory.scratch_pad import ScratchPadMemory
+from jentic_agents.memory.episodic_memory import EpisodicMemory
 from jentic_agents.platform.jentic_client import JenticClient
 from jentic_agents.reasoners.standard_reasoner import StandardReasoner
 # Local LiteLLM wrapper
@@ -93,7 +93,7 @@ def main():
         )
 
         # 3. Initialize Memory and Inbox
-        memory = ScratchPadMemory()
+        memory = EpisodicMemory()
         inbox = CLIInbox(prompt="Enter your goal: ")
 
         # 4. Create and run the Agent

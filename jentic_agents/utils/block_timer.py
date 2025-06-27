@@ -181,7 +181,7 @@ def benchmark(func: Callable, *args, iterations: int = 1, **kwargs) -> Dict[str,
     logger.info(f"Benchmarking {func_name} with {iterations} iterations")
     
     for i in range(iterations):
-        with Timer(f"{func_name}_iter_{i}", auto_log=False) as timer:
+        with Timer(f"{func_name}_iter_{i}") as timer:
             result = func(*args, **kwargs)
             results.append(result)
         

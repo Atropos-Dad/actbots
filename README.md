@@ -24,7 +24,6 @@ jentic_agents/
 │
 ├─ memory/                 # Memory backends
 │   ├─ base_memory.py     # Abstract memory interface
-│   └─ scratch_pad.py     # Simple dict-based memory
 │
 ├─ inbox/                  # Goal/task delivery systems
 │   ├─ base_inbox.py      # Abstract inbox interface
@@ -60,14 +59,14 @@ make lint
 ```python
 from jentic_agents.platform.jentic_client import JenticClient
 from jentic_agents.reasoners.standard_reasoner import StandardReasoner
-from jentic_agents.memory.scratch_pad import ScratchPadMemory
+from jentic_agents.memory.episodic_memory import EpisodicMemory
 from jentic_agents.inbox.cli_inbox import CLIInbox
 from jentic_agents.agents.interactive_cli_agent import InteractiveCLIAgent
 
 # Create components
 jentic_client = JenticClient(api_key="your-key-here")
 reasoner = StandardReasoner(jentic_client=jentic_client)
-memory = ScratchPadMemory()
+memory = EpisodicMemory()
 inbox = CLIInbox()
 
 # Create and run agent
@@ -110,7 +109,6 @@ Agents orchestrate the reasoning loop with memory, inbox, and platform component
 Pluggable memory backends for storing information across reasoning sessions:
 
 - **BaseMemory**: Simple key-value storage interface
-- **ScratchPadMemory**: In-memory dict-based implementation
 
 ### Inbox
 
