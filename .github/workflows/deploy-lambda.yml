@@ -1,0 +1,109 @@
+name: Deploy Lambda Function
+
+on:
+  push:
+    branches: [ main ]
+  workflow_dispatch:
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: Checkout Repository
+      uses: actions/checkout@v4
+      with:
+        fetch-depth: 2  # Fetch current and previous commit for comparison
+    
+    - name: Set up Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: '3.11'
+    
+    - name: Configure AWS CLI
+      uses: aws-actions/configure-aws-credentials@v4
+      with:
+        aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+        aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+        aws-region: ${{ secrets.AWS_REGION }}
+    
+    - name: Install dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install awscli
+    
+    - name: Get changed files
+      id: changed-files
+      run: |
+        # Get list of changed Python files
+        CHANGED_FILES=$(git diff --name-only HEAD~1 HEAD | grep -E '\.(py)$' || true)
+        echo "changed_files<<EOF" >> $GITHUB_OUTPUT
+        echo "$CHANGED_FILES" >> $GITHUB_OUTPUT
+        echo "EOF" >> $GITHUB_OUTPUT
+        echo "Changed files:"
+        echo "$CHANGED_FILES"
+    
+    - name: Deploy Modified Files
+      if: steps.changed-files.outputs.changed_files != ''
+      env:
+        S3_BUCKET: ${{ secrets.S3_LAMBDA_BUCKET }}
+        LAMBDA_FUNCTION_NAME: ${{ secrets.LAMBDA_FUNCTION_NAME }}
+        S3_KEY: ${{ secrets.S3_LAMBDA_KEY }}  # e.g., "discord-bot-lambda.zip"
+      run: |
+        # Create working directory
+        mkdir -p lambda_temp
+        cd lambda_temp
+        
+        # Download current Lambda package from S3
+        echo "Downloading current Lambda package from S3..."
+        aws s3 cp s3://$S3_BUCKET/$S3_KEY current_package.zip
+        
+        # Extract current package
+        unzip -q current_package.zip
+        rm current_package.zip
+        
+        # Copy changed files to the package
+        echo "Updating changed files..."
+        while IFS= read -r file; do
+          if [[ -n "$file" ]]; then
+            echo "Updating: $file"
+            # Create directory structure if needed
+            mkdir -p "$(dirname "$file")"
+            # Copy the changed file
+            cp "../$file" "$file"
+          fi
+        done <<< "${{ steps.changed-files.outputs.changed_files }}"
+        
+        # Install/update production dependencies
+        echo "Installing/updating dependencies..."
+        pip install -r ../requirements.txt --target . --upgrade
+        
+        # Clean up unnecessary files to reduce package size
+        echo "Cleaning up package..."
+        find . -type d -name "tests" -exec rm -rf {} + 2>/dev/null || true
+        find . -type d -name "__pycache__" -exec rm -rf {} + 2>/dev/null || true
+        find . -name "*.pyc" -delete 2>/dev/null || true
+        find . -name "*.pyo" -delete 2>/dev/null || true
+        rm -rf *.dist-info 2>/dev/null || true
+        
+        # Create new package
+        echo "Creating new deployment package..."
+        zip -r ../updated_package.zip . -q
+        
+        # Upload to S3
+        echo "Uploading to S3..."
+        aws s3 cp ../updated_package.zip s3://$S3_BUCKET/$S3_KEY
+        
+        # Update Lambda function
+        echo "Updating Lambda function..."
+        aws lambda update-function-code \
+          --function-name $LAMBDA_FUNCTION_NAME \
+          --s3-bucket $S3_BUCKET \
+          --s3-key $S3_KEY
+        
+        echo "Deployment completed successfully!"
+    
+    - name: No Changes Detected
+      if: steps.changed-files.outputs.changed_files == ''
+      run: |
+        echo "No Python files were changed. Skipping deployment." 
