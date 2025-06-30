@@ -288,7 +288,7 @@ class MemoryConfig:
         
         if available["openai"]:
             return MemoryConfig.openai_config()
-        elif available["anthropic"] and available["openai"]:
+        elif available["anthropic"]:
             return MemoryConfig.anthropic_config()
         elif available["google"]:
             return MemoryConfig.google_config()
