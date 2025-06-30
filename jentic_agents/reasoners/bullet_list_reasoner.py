@@ -215,7 +215,7 @@ class BulletPlanReasoner(BaseReasoner):
         llm: Optional[BaseLLM] = None,
         model: str = "gpt-4o",
         max_iters: int = 20,
-        search_top_k: int = 15,
+        search_top_k: int = 5,
     ) -> None:
         logger.info(f"Initializing BulletPlanReasoner with model={model}, max_iters={max_iters}, search_top_k={search_top_k}")
         super().__init__()
@@ -325,6 +325,7 @@ Candidate tools discovered (reply with ONLY the *number* of the best match):
 {tool_lines}
 
 IMPORTANT: 
+- If the goal or context mentions a specific platform or service, you MUST prefer tools that match that platform/service.
 - Reply with ONLY a single number (1, 2, 3, etc.). 
 - Choose tools that match the platform/service mentioned in the goal context.
 - If none fit, reply with "0".
