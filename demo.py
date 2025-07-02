@@ -8,6 +8,7 @@ import os
 import sys
 from io import StringIO
 from unittest.mock import Mock
+from jentic_agents.memory.scratch_pad import ScratchPadMemory
 
 # Add the package to the path
 sys.path.insert(0, os.path.dirname(__file__))
@@ -81,7 +82,7 @@ def main():
         model="gpt-4-demo"  # Mock model
     )
     
-    memory = EpisodicMemory()
+    memory = ScratchPadMemory()
     
     # Create test input
     test_input = StringIO("What's 2+2?\nquit\n")
