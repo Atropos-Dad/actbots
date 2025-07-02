@@ -15,7 +15,6 @@ sys.path.insert(0, os.path.dirname(__file__))
 
 from jentic_agents.platform.jentic_client import JenticClient
 from jentic_agents.reasoners.standard_reasoner import StandardReasoner
-from jentic_agents.memory.episodic_memory import EpisodicMemory
 from jentic_agents.inbox.cli_inbox import CLIInbox
 from jentic_agents.agents.interactive_cli_agent import InteractiveCLIAgent
 from jentic_agents.utils.llm import BaseLLM

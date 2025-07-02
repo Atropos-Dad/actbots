@@ -59,14 +59,14 @@ make lint
 ```python
 from jentic_agents.platform.jentic_client import JenticClient
 from jentic_agents.reasoners.standard_reasoner import StandardReasoner
-from jentic_agents.memory.episodic_memory import EpisodicMemory
+from jentic_agents.memory.scratch_pad import ScratchPadMemory
 from jentic_agents.inbox.cli_inbox import CLIInbox
 from jentic_agents.agents.interactive_cli_agent import InteractiveCLIAgent
 
 # Create components
 jentic_client = JenticClient(api_key="your-key-here")
 reasoner = StandardReasoner(jentic_client=jentic_client)
-memory = EpisodicMemory()
+memory = ScratchPadMemory()
 inbox = CLIInbox()
 
 # Create and run agent
