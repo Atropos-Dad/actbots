@@ -11,9 +11,12 @@ PLAN_GENERATION_PROMPT: str = (
 )
 
 TOOL_SELECTION_PROMPT: str = (
-    """Given the current plan step and the list of available tools, return ONLY
-    the identifier of the best tool to execute the step, or the word `none` if
-    no tool is required."""
+    """You are an expert orchestrator. Given the *step* and the *tools* list below,\n"
+    "return **only** the `id` of the single best tool to execute the step, or\n"
+    "the word `none` if no tool is required.\n\n"
+    "Step:\n{step}\n\n"
+    "Tools (JSON):\n{tools_json}\n\n"
+    "Respond with just the id (e.g. `tool_123`) or `none`. Do not include any other text."""
 )
 
 PARAMETER_GENERATION_PROMPT: str = (

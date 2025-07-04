@@ -6,10 +6,11 @@ work can focus on incrementally implementing and testing each piece.
 """
 from __future__ import annotations
 
-from typing import Any, Deque, Dict, List
+from typing import Any, Deque, Dict, List, Optional
+import json
 
 from jentic_agents.reasoners.base_reasoner import BaseReasoner, ReasoningResult
-from ._models import ReasonerState, Step
+from ._models import ReasonerState, Step, Tool
 from ._parser import parse_bullet_plan
 from . import _prompts as prompts  # noqa: WPS433 (importing internal module)
 
@@ -30,6 +31,8 @@ class JenticReasoner(BaseReasoner):
     ) -> None:
         self._jentic = jentic_client
         self._memory = memory
+        # Cache loaded tool definitions to avoid redundant API calls
+        self._tool_cache: Dict[str, Tool] = {}
         self._llm = llm
 
     # ---------------------------------------------------------------------
@@ -85,10 +88,82 @@ class JenticReasoner(BaseReasoner):
         return {"tool_id": tool_id, "params": params, "result": result}
 
     def _select_tool(self, step: Step) -> str:  # noqa: D401
-        """Ask the LLM to choose the best tool for the step."""
-        prompt = prompts.TOOL_SELECTION_PROMPT.format(step=step.text)
-        return self._llm.complete(prompt).strip()
+        """Search Jentic for relevant tools and ask the LLM to pick one."""
+        tools = self._search_tools(step)
+        tools_json = json.dumps([
+            {
+                "id": t.id,
+                "name": t.name,
+                "description": t.description,
+                "api_name": t.api_name,
+            }
+            for t in tools
+        ], ensure_ascii=False)
 
+        prompt = prompts.TOOL_SELECTION_PROMPT.format(step=step.text, tools_json=tools_json)
+        reply = self._llm.complete(prompt).strip()
+
+        if self._is_valid_tool_reply(reply, tools):
+            return reply
+
+        # Retry once with explicit instruction
+        retry_prompt = (
+            f"Previous response was invalid. Respond ONLY with a tool id from the list or 'none'.\n"
+            f"List: {[t.id for t in tools]}"
+        )
+        reply = self._llm.complete(retry_prompt).strip()
+        if self._is_valid_tool_reply(reply, tools):
+            return reply
+
+        # Give up – mark step failed by raising
+        raise ValueError(f"Could not obtain valid tool id for step '{step.text}'. Last reply: {reply}")
+
+    # ------------------------------------------------------------------
+    # Tool discovery helpers
+    # ------------------------------------------------------------------
+    def _search_tools(self, step: Step, top_k: int = 5) -> List[Tool]:
+        """Search Jentic for tools relevant to the step text."""
+        hits = self._jentic.search(step.text, top_k=top_k)
+        tools: List[Tool] = []
+        for hit in hits:
+            tool_id = hit["id"]
+            tools.append(self._get_tool(tool_id, hit))
+        return tools
+
+    def _get_tool(self, tool_id: str, summary: Optional[Dict[str, Any]] = None) -> Tool:
+        """Return Tool metadata, loading full definition if necessary."""
+        if tool_id in self._tool_cache:
+            return self._tool_cache[tool_id]
+
+        if summary is None:
+            summary = {"id": tool_id, "name": "unknown", "description": ""}
+
+        # Load detailed definition (parameters etc.)
+        try:
+            definition = self._jentic.load(tool_id)
+            parameters = definition.get("parameters", {})
+        except Exception:
+            parameters = {}
+
+        tool = Tool(
+            id=tool_id,
+            name=summary.get("name", definition.get("name", tool_id)),
+            description=summary.get("description", ""),
+            api_name=summary.get("api_name", definition.get("api_name", "unknown")),
+            parameters=parameters,
+        )
+        self._tool_cache[tool_id] = tool
+        return tool
+
+    def _is_valid_tool_reply(self, reply: str, tools: List[Tool]) -> bool:
+        """Check if the LLM reply is a valid tool id or 'none'."""
+        if reply == "none":
+            return True
+        return any(t.id == reply for t in tools)
+
+    # ------------------------------------------------------------------
+    # Parameter generation
+    # ------------------------------------------------------------------
     def _generate_params(self, step: Step, tool_id: str) -> Dict[str, Any]:  # noqa: D401
         """Generate JSON parameters for the tool via the LLM."""
         prompt = prompts.PARAMETER_GENERATION_PROMPT.format(
