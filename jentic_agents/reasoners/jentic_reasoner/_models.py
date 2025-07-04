@@ -30,6 +30,9 @@ class Step(BaseModel):
     indent: int
     status: str = "pending"  # pending | running | done | failed
     result: Optional[Any] = None
+    # New fields for explicit data flow annotations
+    output_key: Optional[str] = None  # snake_case key produced by this step
+    input_keys: List[str] = Field(default_factory=list)  # keys this step consumes
     error: Optional[str] = None
     reflection_attempts: int = 0
     retry_count: int = 0
