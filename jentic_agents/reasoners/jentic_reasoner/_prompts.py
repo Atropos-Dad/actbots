@@ -30,8 +30,23 @@ PARAMETER_GENERATION_PROMPT: str = (
 )
 
 REFLECTION_PROMPT: str = (
-    """The last step failed. Analyze the error, the step text, and the overall
-    goal, then suggest a corrected approach or modification."""
+    """You are a self-healing reasoning engine. A step failed. Analyse the error and propose ONE fix.
+
+Return a JSON object with exactly these keys:
+  action: one of "retry_params", "change_tool", "rephrase_step", "give_up"
+  tool_id: (required if action==change_tool) valid tool id
+  params: (required if action in [retry_params, change_tool]) JSON object of parameters
+  step:   (required if action==rephrase_step) new step text
+
+If action==give_up, omit the other keys.
+
+Context for you:
+Goal: {goal}
+Failed Step: {step}
+ErrorType: {error_type}
+ErrorMessage: {error_message}
+ToolSchema: {tool_schema}
+"""
 )
 
 FINAL_ANSWER_SYNTHESIS_PROMPT: str = (

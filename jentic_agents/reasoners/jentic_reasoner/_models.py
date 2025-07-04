@@ -32,6 +32,7 @@ class Step(BaseModel):
     result: Optional[Any] = None
     error: Optional[str] = None
     reflection_attempts: int = 0
+    retry_count: int = 0
 
 
 class Tool(BaseModel):

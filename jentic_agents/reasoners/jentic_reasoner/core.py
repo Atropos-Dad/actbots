@@ -6,8 +6,9 @@ work can focus on incrementally implementing and testing each piece.
 """
 from __future__ import annotations
 
-from typing import Any, Deque, Dict, List, Optional
+from typing import Any, Deque, Dict, List, Optional, TypedDict
 import json
+from copy import deepcopy
 
 from jentic_agents.reasoners.base_reasoner import BaseReasoner, ReasoningResult
 from ._models import ReasonerState, Step, Tool
@@ -18,6 +19,21 @@ from . import _prompts as prompts  # noqa: WPS433 (importing internal module)
 from jentic_agents.platform.jentic_client import JenticClient  # type: ignore
 from jentic_agents.memory.base_memory import BaseMemory
 from jentic_agents.utils.llm import BaseLLM
+
+
+class ParameterValidationError(ValueError):
+    """Raised when generated parameters fail validation."""
+
+
+class ToolExecutionError(RuntimeError):
+    """Raised when executing a tool fails."""
+
+
+class ReflectionDecision(TypedDict, total=False):
+    action: str
+    tool_id: str
+    params: Dict[str, Any]
+    step: str
 
 
 class JenticReasoner(BaseReasoner):
@@ -75,17 +91,32 @@ class JenticReasoner(BaseReasoner):
         state.plan = parse_bullet_plan(plan_md)
 
     def _execute_step(self, step: Step, state: ReasonerState) -> Dict[str, Any]:  # noqa: D401
-        """Execute a single plan step and return raw tool call result."""
+        """Execute a single plan step with retry bookkeeping."""
         step.status = "running"
-        tool_id = self._select_tool(step)
-        if tool_id == "none":  # pure reasoning step, nothing to execute
+        try:
+            tool_id = self._select_tool(step)
+            if tool_id == "none":  # pure reasoning step
+                step.status = "done"
+                return {}
+
+            params = self._generate_params(step, tool_id)
+            try:
+                result = self._jentic.execute(tool_id, params)
+            except Exception as exc:  # noqa: BLE001
+                raise ToolExecutionError(str(exc)) from exc
+
             step.status = "done"
-            return {}
-        params = self._generate_params(step, tool_id)
-        result = self._jentic.execute(tool_id, params)
-        step.status = "done"
-        step.result = result
-        return {"tool_id": tool_id, "params": params, "result": result}
+            step.result = result
+            return {"tool_id": tool_id, "params": params, "result": result}
+
+        except ParameterValidationError as exc:
+            self._reflect_on_failure(step, state, exc, error_type="ParameterValidationError")
+        except ToolExecutionError as exc:
+            self._reflect_on_failure(step, state, exc, error_type="ToolExecutionError")
+        except Exception as exc:  # noqa: BLE001
+            self._reflect_on_failure(step, state, exc, error_type="UnexpectedError")
+        # In case reflection decided to give up return empty
+        return {}
 
     def _select_tool(self, step: Step) -> str:  # noqa: D401
         """Search Jentic for relevant tools and ask the LLM to pick one."""
@@ -179,7 +210,7 @@ class JenticReasoner(BaseReasoner):
         if tool.parameters:
             unknown_keys = [k for k in params.keys() if k not in tool.parameters]
             if unknown_keys:
-                raise ValueError(f"Unknown parameter keys for tool {tool_id}: {unknown_keys}")
+                raise ParameterValidationError(f"Unknown parameter keys for tool {tool_id}: {unknown_keys}")
         return params
 
     # ------------------------------------------------------------------
@@ -198,19 +229,60 @@ class JenticReasoner(BaseReasoner):
             try:
                 return json.loads(raw_retry)
             except json.JSONDecodeError as exc:
-                raise ValueError("Failed to obtain valid JSON parameters") from exc
+                raise ParameterValidationError("Failed to obtain valid JSON parameters") from exc
 
-    def _reflect_on_failure(self, step: Step, state: ReasonerState, error: Exception) -> None:  # noqa: D401
-        """Invoke reflection when a step fails."""
+    def _reflect_on_failure(
+        self,
+        step: Step,
+        state: ReasonerState,
+        error: Exception,
+        *,
+        error_type: str,
+    ) -> None:  # noqa: D401
+        """Invoke reflection logic and possibly modify the plan."""
         step.status = "failed"
         step.error = str(error)
-        if step.reflection_attempts >= 2:  # arbitrary retry limit
+
+        if step.retry_count >= 2:
+            state.history.append(f"Giving up on step after retries: {step.text}")
             return
-        step.reflection_attempts += 1
-        prompt = prompts.REFLECTION_PROMPT.format(step=step.text, error=str(error), goal=state.goal)
-        reflection = self._llm.complete(prompt)
-        # For now just append reflection to history. Later we can adjust plan.
-        state.history.append(reflection)
+
+        tool_schema = {}
+        try:
+            current_tool = self._get_tool(self._select_tool(step))
+            tool_schema = current_tool.parameters
+        except Exception:
+            pass
+
+        prompt = prompts.REFLECTION_PROMPT.format(
+            goal=state.goal,
+            step=step.text,
+            error_type=error_type,
+            error_message=str(error),
+            tool_schema=json.dumps(tool_schema, ensure_ascii=False),
+        )
+        raw = self._llm.complete(prompt).strip()
+        decision = self._parse_json_or_retry(raw, prompt)
+
+        action = decision.get("action")
+        state.history.append(f"Reflection decision: {decision}")
+        if action == "give_up":
+            return
+
+        new_step = deepcopy(step)
+        new_step.retry_count += 1
+        new_step.status = "pending"
+        # Handle actions
+        if action == "rephrase_step" and "step" in decision:
+            new_step.text = str(decision["step"])
+        elif action == "change_tool" and "tool_id" in decision:
+            # store chosen tool_id in memory for later stages if needed
+            self._memory.store(f"forced_tool:{new_step.text}", decision["tool_id"])
+        elif action == "retry_params" and "params" in decision:
+            # stash params so _generate_params can skip LLM call next time
+            self._memory.store(f"forced_params:{new_step.text}", decision["params"])
+        # push the modified step to the front of the deque for immediate retry
+        state.plan.appendleft(new_step)
 
     def _synthesize_final_answer(self, state: ReasonerState) -> str:  # noqa: D401
         """Combine successful step results into a final answer."""
