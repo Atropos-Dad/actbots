@@ -5,9 +5,14 @@ iterated as we refine the reasoner's capabilities.
 """
 
 PLAN_GENERATION_PROMPT: str = (
-    """You are a planning assistant. Given the user's goal, produce an indented
-    markdown bullet list representing a step-by-step plan. Each bullet should
-    be short and action-oriented."""
+    """You are a planning assistant. Given the user's goal below, output **ONLY** an
+    indented markdown bullet list representing a step-by-step plan to achieve it.
+    Each bullet must be short and action-oriented.
+
+    Goal:
+    {goal}
+
+    Respond with the bullet list only."""
 )
 
 TOOL_SELECTION_PROMPT: str = (

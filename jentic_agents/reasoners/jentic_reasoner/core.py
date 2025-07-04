@@ -36,7 +36,7 @@ class ReflectionDecision(TypedDict, total=False):
     step: str
 
 
-class JenticReasoner(BaseReasoner):
+class JenticReasoner:
     """Reasoner implementing ReWOO + Reflection on top of Jentic tools."""
 
     def __init__(
@@ -50,6 +50,17 @@ class JenticReasoner(BaseReasoner):
         # Cache loaded tool definitions to avoid redundant API calls
         self._tool_cache: Dict[str, Tool] = {}
         self._llm = llm
+
+        # ------------------------------------------------------------------
+        # Internal helper wrappers
+        # ------------------------------------------------------------------
+
+    def _call_llm(self, prompt: str, **kwargs) -> str:
+        """Send a single-turn user prompt to the LLM and return assistant content."""
+        messages = [
+            {"role": "user", "content": prompt},
+        ]
+        return self._llm.chat(messages, **kwargs).strip()
 
     # ---------------------------------------------------------------------
     # Public API
@@ -69,7 +80,8 @@ class JenticReasoner(BaseReasoner):
                 result = self._execute_step(step, state)
                 tool_calls.append(result)
             except Exception as exc:  # noqa: BLE001
-                self._reflect_on_failure(step, state, exc)
+                # Pass generic error type to maintain signature contract
+                self._reflect_on_failure(step, state, exc, error_type="UnexpectedError")
 
         final_answer = self._synthesize_final_answer(state)
         success = state.is_complete and not state.plan
@@ -87,7 +99,7 @@ class JenticReasoner(BaseReasoner):
     def _generate_plan(self, state: ReasonerState) -> None:
         """Generate initial plan from goal using the LLM."""
         prompt = prompts.PLAN_GENERATION_PROMPT.replace("{goal}", state.goal)
-        plan_md = self._llm.complete(prompt)
+        plan_md = self._call_llm(prompt)
         state.plan = parse_bullet_plan(plan_md)
 
     def _execute_step(self, step: Step, state: ReasonerState) -> Dict[str, Any]:  # noqa: D401
@@ -132,7 +144,7 @@ class JenticReasoner(BaseReasoner):
         ], ensure_ascii=False)
 
         prompt = prompts.TOOL_SELECTION_PROMPT.format(step=step.text, tools_json=tools_json)
-        reply = self._llm.complete(prompt).strip()
+        reply = self._call_llm(prompt).strip()
 
         if self._is_valid_tool_reply(reply, tools):
             return reply
@@ -142,7 +154,7 @@ class JenticReasoner(BaseReasoner):
             f"Previous response was invalid. Respond ONLY with a tool id from the list or 'none'.\n"
             f"List: {[t.id for t in tools]}"
         )
-        reply = self._llm.complete(retry_prompt).strip()
+        reply = self._call_llm(retry_prompt).strip()
         if self._is_valid_tool_reply(reply, tools):
             return reply
 
@@ -204,7 +216,7 @@ class JenticReasoner(BaseReasoner):
             tool_schema=json.dumps(tool.parameters, ensure_ascii=False),
         )
 
-        raw = self._llm.complete(prompt).strip()
+        raw = self._call_llm(prompt).strip()
         params = self._parse_json_or_retry(raw, prompt)
         # Basic structural validation: ensure keys exist in schema if schema provided
         if tool.parameters:
@@ -225,7 +237,7 @@ class JenticReasoner(BaseReasoner):
                 f"Your previous output was not valid JSON. Respond ONLY with a JSON object.\n"
                 f"Original prompt was:\n{original_prompt}"
             )
-            raw_retry = self._llm.complete(retry_prompt).strip()
+            raw_retry = self._call_llm(retry_prompt).strip()
             try:
                 return json.loads(raw_retry)
             except json.JSONDecodeError as exc:
@@ -261,7 +273,7 @@ class JenticReasoner(BaseReasoner):
             error_message=str(error),
             tool_schema=json.dumps(tool_schema, ensure_ascii=False),
         )
-        raw = self._llm.complete(prompt).strip()
+        raw = self._call_llm(prompt).strip()
         decision = self._parse_json_or_retry(raw, prompt)
 
         action = decision.get("action")
@@ -287,4 +299,4 @@ class JenticReasoner(BaseReasoner):
     def _synthesize_final_answer(self, state: ReasonerState) -> str:  # noqa: D401
         """Combine successful step results into a final answer."""
         prompt = prompts.FINAL_ANSWER_SYNTHESIS_PROMPT.format(history="\n".join(state.history))
-        return self._llm.complete(prompt)
+        return self._call_llm(prompt)
