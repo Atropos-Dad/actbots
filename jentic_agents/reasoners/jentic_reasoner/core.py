@@ -19,6 +19,10 @@ from . import _prompts as prompts  # noqa: WPS433 (importing internal module)
 from jentic_agents.platform.jentic_client import JenticClient  # type: ignore
 from jentic_agents.memory.base_memory import BaseMemory
 from jentic_agents.utils.llm import BaseLLM
+from jentic_agents.utils.logger import get_logger
+import uuid
+
+logger = get_logger(__name__)
 
 
 class ParameterValidationError(ValueError):
@@ -67,8 +71,12 @@ class JenticReasoner:
     # ---------------------------------------------------------------------
     def run(self, goal: str, max_iterations: int = 10) -> ReasoningResult:  # noqa: D401
         """Execute the reasoning loop until completion or exhaustion."""
+        run_id = uuid.uuid4().hex[:8]
+        self._run_id = run_id
+        logger.info("phase=PLAN_START run_id=%s goal=%s", run_id, goal)
         state = ReasonerState(goal=goal)
         self._generate_plan(state)
+        logger.info("phase=PLAN_DONE run_id=%s steps=%d", run_id, len(state.plan))
 
         iterations = 0
         tool_calls: List[Dict[str, Any]] = []
@@ -76,15 +84,18 @@ class JenticReasoner:
         while state.plan and not state.is_complete and iterations < max_iterations:
             step = state.plan.popleft()
             iterations += 1
+            logger.info("phase=ITERATION_START run_id=%s iter=%d step_text=%s", run_id, iterations, step.text)
             try:
                 result = self._execute_step(step, state)
                 tool_calls.append(result)
+                logger.info("phase=ITERATION_END run_id=%s iter=%d status=success", run_id, iterations)
             except Exception as exc:  # noqa: BLE001
                 # Pass generic error type to maintain signature contract
                 self._reflect_on_failure(step, state, exc, error_type="UnexpectedError")
 
         final_answer = self._synthesize_final_answer(state)
         success = state.is_complete and not state.plan
+        logger.info("phase=FINAL run_id=%s success=%s", run_id, success)
         return ReasoningResult(
             final_answer=final_answer,
             iterations=iterations,
@@ -100,6 +111,7 @@ class JenticReasoner:
         """Generate initial plan from goal using the LLM."""
         prompt = prompts.PLAN_GENERATION_PROMPT.replace("{goal}", state.goal)
         plan_md = self._call_llm(prompt)
+        logger.info(f"phase=PLAN_GENERATED run_id={self._run_id} plan={plan_md}")
         state.plan = parse_bullet_plan(plan_md)
 
     def _execute_step(self, step: Step, state: ReasonerState) -> Dict[str, Any]:  # noqa: D401
@@ -114,6 +126,10 @@ class JenticReasoner:
             params = self._generate_params(step, tool_id)
             try:
                 result = self._jentic.execute(tool_id, params)
+                logger.info("phase=EXECUTE_OK run_id=%s tool_id=%s", getattr(self, '_run_id', 'NA'), tool_id)
+            except Exception as exc:  # noqa: BLE001
+                logger.warning("phase=EXECUTE_FAIL run_id=%s tool_id=%s error=%s", getattr(self, '_run_id', 'NA'), tool_id, exc)
+                raise ToolExecutionError(str(exc)) from exc
             except Exception as exc:  # noqa: BLE001
                 raise ToolExecutionError(str(exc)) from exc
 
@@ -133,6 +149,7 @@ class JenticReasoner:
     def _select_tool(self, step: Step) -> str:  # noqa: D401
         """Search Jentic for relevant tools and ask the LLM to pick one."""
         tools = self._search_tools(step)
+        logger.info("phase=SELECT_SEARCH run_id=%s step_text=%s hits=%s", getattr(self, '_run_id', 'NA'), step.text, [f"{t.id}:{t.name}" for t in tools])
         tools_json = json.dumps([
             {
                 "id": t.id,
@@ -218,6 +235,7 @@ class JenticReasoner:
 
         raw = self._call_llm(prompt).strip()
         params = self._parse_json_or_retry(raw, prompt)
+        logger.info("phase=PARAMS_DONE run_id=%s tool_id=%s param_keys=%s", getattr(self, '_run_id', 'NA'), tool_id, list(params.keys()))
         # Basic structural validation: ensure keys exist in schema if schema provided
         if tool.parameters:
             unknown_keys = [k for k in params.keys() if k not in tool.parameters]
