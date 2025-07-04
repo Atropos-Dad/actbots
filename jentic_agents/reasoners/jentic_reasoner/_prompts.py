@@ -20,8 +20,13 @@ TOOL_SELECTION_PROMPT: str = (
 )
 
 PARAMETER_GENERATION_PROMPT: str = (
-    """Generate a JSON object of parameters for the selected tool so that the
-    step can be executed in the context of the given goal."""
+    """You are parameter-builder AI. Given the *goal*, the *step*, and the *tool*\n"
+    "schema below, produce ONLY a valid JSON object of parameters matching the\n"
+    "tool's specification. Do not wrap the JSON in triple-backticks or prose.\n\n"
+    "Goal:\n{goal}\n\n"
+    "Step:\n{step}\n\n"
+    "Tool schema (JSON):\n{tool_schema}\n\n"
+    "Respond with the JSON object only."""
 )
 
 REFLECTION_PROMPT: str = (

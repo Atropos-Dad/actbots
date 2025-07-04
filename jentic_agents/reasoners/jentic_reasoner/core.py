@@ -165,15 +165,40 @@ class JenticReasoner(BaseReasoner):
     # Parameter generation
     # ------------------------------------------------------------------
     def _generate_params(self, step: Step, tool_id: str) -> Dict[str, Any]:  # noqa: D401
-        """Generate JSON parameters for the tool via the LLM."""
+        """Generate and validate parameters for the selected tool via the LLM."""
+        tool = self._get_tool(tool_id)  # ensure we have full schema
         prompt = prompts.PARAMETER_GENERATION_PROMPT.format(
-            tool_id=tool_id,
+            goal=step.text,  # using step text as sub-goal for param generation
             step=step.text,
-            goal=step.text,
+            tool_schema=json.dumps(tool.parameters, ensure_ascii=False),
         )
-        # NOTE: In production we would parse JSON. For now, return empty dict.
-        _ = self._llm.complete(prompt)
-        return {}
+
+        raw = self._llm.complete(prompt).strip()
+        params = self._parse_json_or_retry(raw, prompt)
+        # Basic structural validation: ensure keys exist in schema if schema provided
+        if tool.parameters:
+            unknown_keys = [k for k in params.keys() if k not in tool.parameters]
+            if unknown_keys:
+                raise ValueError(f"Unknown parameter keys for tool {tool_id}: {unknown_keys}")
+        return params
+
+    # ------------------------------------------------------------------
+    # JSON parsing helpers
+    # ------------------------------------------------------------------
+    def _parse_json_or_retry(self, raw: str, original_prompt: str) -> Dict[str, Any]:
+        """Attempt to parse JSON; retry once if it fails."""
+        try:
+            return json.loads(raw)
+        except json.JSONDecodeError:
+            retry_prompt = (
+                f"Your previous output was not valid JSON. Respond ONLY with a JSON object.\n"
+                f"Original prompt was:\n{original_prompt}"
+            )
+            raw_retry = self._llm.complete(retry_prompt).strip()
+            try:
+                return json.loads(raw_retry)
+            except json.JSONDecodeError as exc:
+                raise ValueError("Failed to obtain valid JSON parameters") from exc
 
     def _reflect_on_failure(self, step: Step, state: ReasonerState, error: Exception) -> None:  # noqa: D401
         """Invoke reflection when a step fails."""
