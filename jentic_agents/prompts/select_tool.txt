@@ -1,12 +1,19 @@
-Current plan step:
-"{plan_step_text}"{goal_info}
-
-Candidate tools discovered (reply with ONLY the *number* of the best match):
-{tool_lines}
-
-IMPORTANT: 
-- Reply with ONLY a single number (1, 2, 3, etc.). 
-- Choose tools that match the platform/service mentioned in the goal context.
-- If none fit, reply with "0".
-
-Number:
+{
+  "instruction": "Select the single most appropriate tool from the list of candidates to accomplish the current task step. Prioritize simplicity, directness, and compatibility with the goal and available inputs.",
+  "inputs": {
+    "goal": "{goal}",
+    "plan_step": "{plan_step}",
+    "memory_keys": "{memory_keys}",
+    "tool_candidates": "{tool_candidates}"
+  },
+  "rules": [
+    "Choose the tool that most directly and efficiently accomplishes the current step, with minimal setup or prerequisites.",
+    "Avoid tools that require creating or configuring additional resources (e.g. channels, auth objects) unless the goal explicitly requires them.",
+    "Prefer single-step tools over those that require multiple steps to complete the action.",
+    "Strongly prefer native tools tied to the platform or API mentioned in the goal (e.g., discord.com) over third-party or workflow-based tools.",
+    "Use the tool whose required input types best match the available information in the plan step and memory.",
+    "If multiple tools could work, choose the simplest and most robust option with the fewest assumptions or dependencies.",
+    "If no candidate tool meets the requirements or lacks necessary inputs, respond with '0'.",
+    "Respond with ONLY the number of the best tool (e.g., '2'). Do not include any explanation or extra text."
+  ]
+}
