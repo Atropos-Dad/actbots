@@ -13,14 +13,18 @@ from __future__ import annotations
 
 import re
 from collections import deque
-from typing import Deque
+from typing import Deque, List
+from jentic_agents.utils.logger import get_logger
+
 
 from ._models import Step
 
 # Two spaces per indent level keeps markdown compatibility.
 _INDENT_SIZE = 2
 _BULLET_PATTERN = re.compile(r"^\s*(?:[-*+]\s|\d+\.\s)(.*)$")
-
+# Capture (input: a, b) and (output: c) sections
+_IO_DIRECTIVE_PATTERN = re.compile(r"\((input|output):\s*([^)]*)\)")
+logger = get_logger(__name__)
 
 def _line_indent(text: str) -> int:
     """Return indent level (0-based) from leading spaces."""
@@ -46,7 +50,36 @@ def parse_bullet_plan(markdown: str) -> Deque[Step]:
         # Skip empty lines
         if not raw_line.strip():
             continue
+        # Only process lines that look like list items (start with bullet or number)
+        if not _BULLET_PATTERN.match(raw_line):
+            continue
+
         indent = _line_indent(raw_line)
         stripped = _strip_bullet(raw_line)
-        steps.append(Step(text=stripped, indent=indent))
+
+        # Extract (input: ...) and (output: ...) directives
+        input_keys: List[str] = []
+        output_key = None
+        for io_match in _IO_DIRECTIVE_PATTERN.finditer(stripped):
+            kind, payload = io_match.groups()
+            if kind == "output":
+                output_key = payload.strip()
+            else:  # input
+                input_keys = [k.strip() for k in payload.split(',') if k.strip()]
+        # Remove directives from the visible text
+        cleaned_text = _IO_DIRECTIVE_PATTERN.sub("", stripped).strip()
+
+        steps.append(
+            Step(
+                text=cleaned_text,
+                indent=indent,
+                output_key=output_key,
+                input_keys=input_keys,
+            )
+        )
+
+    logger.info(f"Parsed steps")
+    for step in steps:
+        logger.info(f"Step => step.text: {step.text}, step.indent: {step.indent}, step.output_key: {step.output_key}, step.input_keys: {step.input_keys}")
+
     return steps
