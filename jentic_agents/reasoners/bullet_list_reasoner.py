@@ -1,3 +1,38 @@
+# bullet_plan_reasoner.py
+"""BulletPlanReasoner — a *plan‑first, late‑bind* reasoning loop.
+
+This class implements the **BulletPlan** strategy described in chat:
+
+1. *Plan* — LLM produces a natural‑language indented Markdown bullet list
+   of steps (potentially nested). No tools are named at this stage.
+2. *Select* — at run‑time, for **each** step the reasoner
+   • searches Jentic for suitable tools,
+   • offers the top‑k candidates to the LLM,
+   • receives an index of the chosen tool (or a request to refine the
+     search query).
+3. *Act* — loads the chosen tool spec, prompts the LLM for parameters
+   (with memory enumeration), executes the tool and stores results.
+4. *Observe / Evaluate / Reflect* — passes tool output back to LLM so it
+   can mark the step complete, retry, or patch the plan.
+
+The class extends *BaseReasoner* so it can be swapped into any
+*BaseAgent* unchanged.
+
+NOTE ▸ For brevity, this file depends on the following external pieces
+(which already exist in the repo skeleton):
+
+* `JenticClient` – thin wrapper around `jentic_sdk` with `.search()`,
+  `.load()`, `.execute()`.
+* `MemoryItem` dataclass and helper `prompt_memory_enumeration()` from the
+  earlier discussion.
+* A generic `call_llm(messages: list[dict], **kw)` helper that wraps the
+  chosen OpenAI/Gemini client.
+
+Where full implementations would be lengthy (e.g. robust Markdown plan
+parser, reflection logic) the code inserts *TODO* comments so the
+autonomous coding agent can fill them out.
+"""
+
 from __future__ import annotations
 
 import json
