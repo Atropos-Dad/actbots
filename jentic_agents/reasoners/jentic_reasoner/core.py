@@ -165,11 +165,19 @@ class JenticReasoner:
         they must ensure the tool returns JSON-serialisable results.
         """
         if step.output_key and step.result is not None:
+            # Unwrap OperationResult-like objects to their payload for JSON safety
+            value_to_store = (
+                step.result["result"].output if hasattr(step.result, "result") else step.result
+            )
             try:
-                self._memory.store(step.output_key, step.result)
-                snippet = str(step.result)[:80].replace("\n", " ")
+                self._memory.store(step.output_key, value_to_store)
+                snippet = str(value_to_store)[:80].replace("\n", " ")
                 state.history.append(f"stored {step.output_key}: {snippet}")
-                logger.info("phase=MEM_STORE run_id=%s key=%s", getattr(self, '_run_id', 'NA'), step.output_key)
+                logger.info(
+                    "phase=MEM_STORE run_id=%s key=%s",
+                    getattr(self, "_run_id", "NA"),
+                    step.output_key,
+                )
             except Exception as exc:  # noqa: BLE001
                 logger.warning("Could not store result for key '%s': %s", step.output_key, exc)
 
@@ -178,26 +186,27 @@ class JenticReasoner:
     # ------------------------------------------------------------------
     def _execute_reasoning_step(self, step: Step, inputs: Dict[str, Any]) -> Any:  # noqa: D401
         """Execute a reasoning-only step via the LLM and return its output."""
-        # Make inputs printable
-        mem_snippet = json.dumps(inputs, ensure_ascii=False)
-        prompt = textwrap.dedent(
-            f"""
-            You are performing an internal reasoning sub-task.
-            Task: {step.text}
-            Relevant data (JSON): {mem_snippet}
-
-            Think step-by-step and output ONLY the final result. If the result is structured, return valid JSON.
-            """
-        )
-        reply = self._call_llm(prompt).strip()
-        # Try to extract fenced JSON
-        m = _JSON_FENCE_RE.search(reply)
-        if m:
-            reply = m.group(1).strip()
-        # Attempt JSON parse; fall back to raw text
         try:
+            # Make inputs printable
+            mem_snippet = json.dumps(inputs, ensure_ascii=False)
+            prompt = textwrap.dedent(
+                f"""
+                You are performing an internal reasoning sub-task.
+                Task: {step.text}
+                Relevant data (JSON): {mem_snippet}
+    
+                Think step-by-step and output ONLY the final result. If the result is structured, return valid JSON.
+                """
+            )
+            reply = self._call_llm(prompt).strip()
+            # Try to extract fenced JSON
+            m = _JSON_FENCE_RE.search(reply)
+            if m:
+                reply = m.group(1).strip()
+            # Attempt JSON parse; fall back to raw text
+
             return json.loads(reply)
-        except Exception:
+        except Exception as e:
             return reply
 
     # ------------------------------------------------------------------
@@ -231,7 +240,7 @@ class JenticReasoner:
             raise ToolExecutionError(str(exc)) from exc
 
         step.status = "done"
-        step.result = result
+        step.result = result['result'].output
         # Persist in-memory for downstream steps
         self._store_step_output(step, state)
         return {"tool_id": tool_id, "params": params, "result": result}
