@@ -35,7 +35,7 @@ PLAN_GENERATION_PROMPT: str = (
       → if fails: report that article search failed.
     - extract title and URL from each item (input: nyt_articles) (output: article_list)
       → if fails: report that no articles were found.
-    - post article_list to Discord channel 12345 (input: article_list) (output: post_confirmation)
+    - send articles as a Discord message to Discord channel 12345 (input: article_list) (output: post_confirmation)
       → if fails: notify the user that posting to Discord failed.
     ```
 
@@ -65,14 +65,42 @@ TOOL_SELECTION_PROMPT: str = (
     "Respond with just the id (e.g. `tool_123`) or `none`. Do not include any other text."""
 )
 
-PARAMETER_GENERATION_PROMPT: str = (
-    """You are parameter-builder AI. Given the *goal*, the *step*, and the *tool*\n"
-    "schema below, produce ONLY a valid JSON object of parameters matching the\n"
-    "tool's specification. Do not wrap the JSON in triple-backticks or prose.\n\n"
-    "Goal:\n{goal}\n\n"
-    "Step:\n{step}\n\n"
-    "Tool schema (JSON):\n{tool_schema}\n\n"
-    "Respond with the JSON object only."""
+PARAMETER_GENERATION_PROMPT = ("""
+    "You are Parameter‑Builder AI.\n\n"
+    
+    "🛑 OUTPUT FORMAT REQUIREMENT 🛑\n"
+    "You must respond with a **single, valid JSON object** only.\n"
+    "→ No markdown, no prose, no backticks, no ```json blocks.\n"
+    "→ Do not escape newlines (no '\\n' inside strings unless part of real content).\n"
+    "→ All values must be properly quoted and valid JSON types.\n\n"
+
+    "ALLOWED_KEYS in the response parameters:\n{allowed_keys}\n\n"
+
+    "STEP:\n{step}\n\n"
+    "MEMORY CONTEXT:\n{step_inputs}\n\n"
+    "TOOL SCHEMA (JSON):\n{tool_schema}\n\n"
+
+    "RULES:\n"
+    "1. Only include keys from ALLOWED_KEYS — do NOT invent new ones.\n"
+    "2. Extract values from Step and MEMORY CONTEXT; do not include MEMORY CONTEXT keys themselves.\n"
+    "3. If a key's value would be null or undefined, omit it entirely.\n"
+    "4. If IDs must be parsed from URLs, extract only the required portion.\n\n"
+
+    "EXAMPLES:\n"
+    "✅ Good:\n"
+    "  {{\"channel_id\": \"123\", \"content\": \"[Example](https://example.com)\"}}\n"
+    "❌ Bad:\n"
+    "  ```json\n  {{\"channel_id\": \"123\"}}\n  ```  ← No code blocks!\n"
+    "  {{\"channel_id\": \"123\", \"step_inputs\": {{...}}}} ← step_inputs is not allowed\n\n"
+
+    "BEFORE YOU RESPOND:\n"
+    "✅ Confirm that all keys are in ALLOWED_KEYS\n"
+    "✅ Confirm the output starts with '{{' and ends with '}}'\n"
+    "✅ Confirm the output is parsable with `JSON.parse()`\n\n"
+
+    "🚨 FINAL RULE: Your reply MUST contain only a single raw JSON object. No explanation. No markdown. No escaping. No backticks."
+    "Note: Authentication credentials will be automatically injected by the platform."
+    """
 )
 
 REFLECTION_PROMPT: str = (

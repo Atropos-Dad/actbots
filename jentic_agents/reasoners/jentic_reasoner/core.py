@@ -284,13 +284,22 @@ class JenticReasoner:
     # ------------------------------------------------------------------
     # Tool discovery helpers
     # ------------------------------------------------------------------
-    def _search_tools(self, step: Step, top_k: int = 5) -> List[Tool]:
+    def _search_tools(self, step: Step, top_k: int = 20) -> List[Tool]:
         """Search Jentic for tools relevant to the step text."""
         hits = self._jentic.search(step.text, top_k=top_k)
         tools: List[Tool] = []
         for hit in hits:
-            tool_id = hit["id"]
-            tools.append(self._get_tool(tool_id, hit))
+            # Build lightweight Tool objects from search metadata only – avoids
+            # expensive full-definition fetches for tools we may never use.
+            tools.append(
+                Tool(
+                    id=hit["id"],
+                    name=hit.get("name", "unknown"),
+                    description=hit.get("description", ""),
+                    api_name=hit.get("api_name", "unknown"),
+                    parameters={},
+                )
+            )
         return tools
 
     def _get_tool(self, tool_id: str, summary: Optional[Dict[str, Any]] = None) -> Tool:
@@ -303,20 +312,11 @@ class JenticReasoner:
 
         # Load detailed definition (parameters etc.)
         try:
-            definition = self._jentic.load(tool_id)
-            parameters = definition.get("parameters", {})
+            tool_execution_info = self._jentic.load(tool_id)
         except Exception:
             parameters = {}
-
-        tool = Tool(
-            id=tool_id,
-            name=summary.get("name", definition.get("name", tool_id)),
-            description=summary.get("description", ""),
-            api_name=summary.get("api_name", definition.get("api_name", "unknown")),
-            parameters=parameters,
-        )
-        self._tool_cache[tool_id] = tool
-        return tool
+        self._tool_cache[tool_id] = tool_execution_info
+        return tool_execution_info
 
     def _is_valid_tool_reply(self, reply: str, tools: List[Tool]) -> bool:
         """Check if the LLM reply is a valid tool id or 'none'."""
@@ -350,25 +350,35 @@ class JenticReasoner:
     # ------------------------------------------------------------------
     def _generate_params(self, step: Step, tool_id: str, inputs: Dict[str, Any]) -> Dict[str, Any]:  # noqa: D401
         """Generate and validate parameters for the selected tool via the LLM."""
-        tool = self._get_tool(tool_id)  # ensure we have full schema
-        prompt_inputs = json.dumps(inputs, ensure_ascii=False)
-        prompt = prompts.PARAMETER_GENERATION_PROMPT.format(
-            goal=step.text,
-            step=step.text + f"\nCurrent inputs: {prompt_inputs}",
-            tool_schema=json.dumps(tool.parameters, ensure_ascii=False),
-        )
+        try:
+            tool_execution_info = self._get_tool(tool_id)  # ensure we have full schema
+            allowed_keys = [k for k in tool_execution_info['parameters'].keys()]
+            step_inputs = json.dumps(inputs, ensure_ascii=False)
+            prompt = prompts.PARAMETER_GENERATION_PROMPT.format(
+                allowed_keys=",".join(allowed_keys),
+                step=step.text ,
+                step_inputs=step_inputs,
+                tool_schema=json.dumps(tool_execution_info, ensure_ascii=False)
+            )
 
-        raw = self._call_llm(prompt).strip()
-        params = self._parse_json_or_retry(raw, prompt)
-        # merge concrete inputs
-        params = self._merge_inputs(params, inputs)
-        logger.info("phase=PARAMS_DONE run_id=%s tool_id=%s param_keys=%s", getattr(self, '_run_id', 'NA'), tool_id, list(params.keys()))
-        # Basic structural validation: ensure keys exist in schema if schema provided
-        if tool.parameters:
-            unknown_keys = [k for k in params.keys() if k not in tool.parameters]
-            if unknown_keys:
-                raise ParameterValidationError(f"Unknown parameter keys for tool {tool_id}: {unknown_keys}")
-        return params
+            raw = self._call_llm(prompt).strip()
+            params = self._parse_json_or_retry(raw, prompt)
+            # merge concrete inputs
+            params = self._merge_inputs(params, inputs)
+            logger.info("phase=PARAMS_DONE run_id=%s tool_id=%s param_keys=%s", getattr(self, '_run_id', 'NA'), tool_id, list(params.keys()))
+            # Basic structural validation: ensure keys exist in schema if schema provided
+            # if tool_execution_info['parameters']:
+            #     unknown_keys = [k for k in params.keys() if k not in tool_execution_info['parameters']]
+            #     if unknown_keys:
+            #         raise ParameterValidationError(f"Unknown parameter keys for tool {tool_id}: {unknown_keys}")
+
+            # TEMP FIX
+            params = {k: v for k, v in params.items()
+                      if k in tool_execution_info["parameters"]}
+            return params
+        except Exception as exc:  # noqa: BLE001
+            logger.exception("Error in parameter generation : %s", exc)
+            raise ParameterValidationError(f"Failed to generate parameters for tool {tool_id}") from exc
 
     # ------------------------------------------------------------------
     # JSON parsing helpers
