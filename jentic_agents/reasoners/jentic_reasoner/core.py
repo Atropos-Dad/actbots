@@ -29,6 +29,9 @@ class ParameterValidationError(ValueError):
     """Raised when generated parameters fail validation."""
 
 
+class MissingInputError(KeyError):
+    """Raised when a required memory key is absent."""
+
 class ToolExecutionError(RuntimeError):
     """Raised when executing a tool fails."""
 
@@ -89,8 +92,12 @@ class JenticReasoner:
                 result = self._execute_step(step, state)
                 tool_calls.append(result)
                 logger.info("phase=ITERATION_END run_id=%s iter=%d status=success", run_id, iterations)
+            except ToolExecutionError as exc:
+                self._reflect_on_failure(step, state, exc, error_type="ToolExecutionError")
+            except ParameterValidationError as exc:
+                self._reflect_on_failure(step, state, exc, error_type="ParameterValidationError")
             except Exception as exc:  # noqa: BLE001
-                # Pass generic error type to maintain signature contract
+                # Fallback catch-all
                 self._reflect_on_failure(step, state, exc, error_type="UnexpectedError")
 
         final_answer = self._synthesize_final_answer(state)
@@ -114,37 +121,73 @@ class JenticReasoner:
         logger.info(f"phase=PLAN_GENERATED run_id={self._run_id} plan={plan_md}")
         state.plan = parse_bullet_plan(plan_md)
 
+    # ------------------------------------------------------------------
+    # Memory persistence helpers
+    # ------------------------------------------------------------------
+    def _fetch_inputs(self, step: Step) -> Dict[str, Any]:
+        """Retrieve all required inputs from memory or raise ``ge``."""
+        inputs: Dict[str, Any] = {}
+        for key in step.input_keys:
+            try:
+                inputs[key] = self._memory.get(key)  # type: ignore[attr-defined]
+            except Exception:  # noqa: BLE001
+                logger.warning("Missing required input key: %s", key)
+                raise MissingInputError(key)
+        return inputs
+
+    def _merge_inputs(self, base: Dict[str, Any], inputs: Dict[str, Any]) -> Dict[str, Any]:
+        """Overlay fetched inputs onto LLM-generated params (inputs win)."""
+        merged = base.copy()
+        merged.update(inputs)
+        return merged
+
+    def _store_step_output(self, step: Step, state: ReasonerState) -> None:
+        """Persist a successful step's result under its `output_key`.
+
+        Respect strict typing: only store if both key and result exist.
+        The value is stored *as is*; if callers require serialisable data
+        they must ensure the tool returns JSON-serialisable results.
+        """
+        if step.output_key and step.result is not None:
+            try:
+                self._memory.store(step.output_key, step.result)
+                snippet = str(step.result)[:80].replace("\n", " ")
+                state.history.append(f"stored {step.output_key}: {snippet}")
+                logger.info("phase=MEM_STORE run_id=%s key=%s", getattr(self, '_run_id', 'NA'), step.output_key)
+            except Exception as exc:  # noqa: BLE001
+                logger.warning("Could not store result for key '%s': %s", step.output_key, exc)
+
+    # ------------------------------------------------------------------
+    # Core execution logic
+    # ------------------------------------------------------------------
     def _execute_step(self, step: Step, state: ReasonerState) -> Dict[str, Any]:  # noqa: D401
         """Execute a single plan step with retry bookkeeping."""
         step.status = "running"
         try:
-            tool_id = self._select_tool(step)
-            if tool_id == "none":  # pure reasoning step
-                step.status = "done"
-                return {}
+            # resolve inputs first
+            inputs = self._fetch_inputs(step)
+        except MissingInputError as exc:
+            self._reflect_on_failure(step, state, exc, error_type="MissingInputError")
+            return {}
 
-            params = self._generate_params(step, tool_id)
-            try:
-                result = self._jentic.execute(tool_id, params)
-                logger.info("phase=EXECUTE_OK run_id=%s tool_id=%s", getattr(self, '_run_id', 'NA'), tool_id)
-            except Exception as exc:  # noqa: BLE001
-                logger.warning("phase=EXECUTE_FAIL run_id=%s tool_id=%s error=%s", getattr(self, '_run_id', 'NA'), tool_id, exc)
-                raise ToolExecutionError(str(exc)) from exc
-            except Exception as exc:  # noqa: BLE001
-                raise ToolExecutionError(str(exc)) from exc
-
+        tool_id = self._select_tool(step)
+        if tool_id == "none":  # pure reasoning step
             step.status = "done"
-            step.result = result
-            return {"tool_id": tool_id, "params": params, "result": result}
+            return {}
 
-        except ParameterValidationError as exc:
-            self._reflect_on_failure(step, state, exc, error_type="ParameterValidationError")
-        except ToolExecutionError as exc:
-            self._reflect_on_failure(step, state, exc, error_type="ToolExecutionError")
+        params = self._generate_params(step, tool_id, inputs)
+        try:
+            result = self._jentic.execute(tool_id, params)
+            logger.info("phase=EXECUTE_OK run_id=%s tool_id=%s", getattr(self, '_run_id', 'NA'), tool_id)
         except Exception as exc:  # noqa: BLE001
-            self._reflect_on_failure(step, state, exc, error_type="UnexpectedError")
-        # In case reflection decided to give up return empty
-        return {}
+            logger.warning("phase=EXECUTE_FAIL run_id=%s tool_id=%s error=%s", getattr(self, '_run_id', 'NA'), tool_id, exc)
+            raise ToolExecutionError(str(exc)) from exc
+
+        step.status = "done"
+        step.result = result
+        # Persist in-memory for downstream steps
+        self._store_step_output(step, state)
+        return {"tool_id": tool_id, "params": params, "result": result}
 
     def _select_tool(self, step: Step) -> str:  # noqa: D401
         """Search Jentic for relevant tools and ask the LLM to pick one."""
@@ -224,17 +267,20 @@ class JenticReasoner:
     # ------------------------------------------------------------------
     # Parameter generation
     # ------------------------------------------------------------------
-    def _generate_params(self, step: Step, tool_id: str) -> Dict[str, Any]:  # noqa: D401
+    def _generate_params(self, step: Step, tool_id: str, inputs: Dict[str, Any]) -> Dict[str, Any]:  # noqa: D401
         """Generate and validate parameters for the selected tool via the LLM."""
         tool = self._get_tool(tool_id)  # ensure we have full schema
+        prompt_inputs = json.dumps(inputs, ensure_ascii=False)
         prompt = prompts.PARAMETER_GENERATION_PROMPT.format(
-            goal=step.text,  # using step text as sub-goal for param generation
-            step=step.text,
+            goal=step.text,
+            step=step.text + f"\nCurrent inputs: {prompt_inputs}",
             tool_schema=json.dumps(tool.parameters, ensure_ascii=False),
         )
 
         raw = self._call_llm(prompt).strip()
         params = self._parse_json_or_retry(raw, prompt)
+        # merge concrete inputs
+        params = self._merge_inputs(params, inputs)
         logger.info("phase=PARAMS_DONE run_id=%s tool_id=%s param_keys=%s", getattr(self, '_run_id', 'NA'), tool_id, list(params.keys()))
         # Basic structural validation: ensure keys exist in schema if schema provided
         if tool.parameters:
