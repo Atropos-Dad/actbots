@@ -93,6 +93,7 @@ class JenticReasoner:
 
         while state.plan and not state.is_complete and iterations < max_iterations:
             step = state.plan.popleft()
+            iterations += 1
             # classify once
             if step.step_type == Step.StepType.TOOL:  # only if not set already (default TOOL)
                 try:
@@ -102,8 +103,6 @@ class JenticReasoner:
                     step.step_type = Step.StepType.TOOL
 
             logger.info("phase=ITERATION_START run_id=%s iter=%d type=%s text=%s", run_id, iterations, step.step_type.name, step.text)
-            iterations += 1
-            logger.info("phase=ITERATION_START run_id=%s iter=%d step_text=%s", run_id, iterations, step.text)
             try:
                 result = self._execute_step(step, state)
                 tool_calls.append(result)
@@ -115,6 +114,10 @@ class JenticReasoner:
             except Exception as exc:  # noqa: BLE001
                 # Fallback catch-all
                 self._reflect_on_failure(step, state, exc, error_type="UnexpectedError")
+
+        # Mark completion if no more steps queued
+        if not state.plan:
+            state.is_complete = True
 
         final_answer = self._synthesize_final_answer(state)
         success = state.is_complete and not state.plan
@@ -171,7 +174,7 @@ class JenticReasoner:
             )
             try:
                 self._memory.store(step.output_key, value_to_store)
-                snippet = str(value_to_store)[:80].replace("\n", " ")
+                snippet = str(value_to_store).replace("\n", " ")
                 state.history.append(f"stored {step.output_key}: {snippet}")
                 logger.info(
                     "phase=MEM_STORE run_id=%s key=%s",
@@ -439,5 +442,8 @@ class JenticReasoner:
 
     def _synthesize_final_answer(self, state: ReasonerState) -> str:  # noqa: D401
         """Combine successful step results into a final answer."""
-        prompt = prompts.FINAL_ANSWER_SYNTHESIS_PROMPT.format(history="\n".join(state.history))
+        prompt = prompts.FINAL_ANSWER_SYNTHESIS_PROMPT.format(
+        goal=state.goal,
+        history="\n".join(state.history),
+    )
         return self._call_llm(prompt)

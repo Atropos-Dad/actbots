@@ -96,6 +96,19 @@ ToolSchema: {tool_schema}
 )
 
 FINAL_ANSWER_SYNTHESIS_PROMPT: str = (
-    """Based on the successful steps and accumulated results, provide a concise
-    final answer that satisfies the user's goal."""
+    """
+    You are the autonomous agent’s final-answer generator.
+
+    USER GOAL:
+    {goal}
+
+    AVAILABLE DATA (chronological):
+    {history}
+
+    INSTRUCTIONS:
+    1. Examine the available data and decide whether it is sufficient to fulfil the user goal. If NOT, reply exactly:
+       "ERROR: insufficient data for a reliable answer."
+    2. If sufficient, produce a concise, well-structured answer that directly satisfies the goal. Use markdown for readability.
+    3. Do NOT reveal internal reasoning or the raw data verbatim; transform it into user-facing prose or lists.
+    """
 )
