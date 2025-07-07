@@ -140,3 +140,14 @@ FINAL_ANSWER_SYNTHESIS_PROMPT: str = (
     3. Do NOT reveal internal reasoning or the raw data verbatim; transform it into user-facing prose or lists.
     """
 )
+
+
+STEP_CLASSIFICATION_PROMPT: str = (
+    """
+    Decide if the following task should use an external API/tool or can be done with pure reasoning.
+    Reply with exactly one word: "tool" or "reasoning".
+
+    Task: {step_text}
+    Existing memory keys: {keys_list}
+    """
+)

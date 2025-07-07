@@ -24,6 +24,8 @@ from jentic_agents.utils.logger import get_logger
 import uuid
 import re
 
+from ._prompts import STEP_CLASSIFICATION_PROMPT
+
 logger = get_logger(__name__)
 
 # ---------------------------------------------------------------------------
@@ -331,15 +333,7 @@ class JenticReasoner:
         """Heuristic LLM classifier deciding TOOL vs REASONING."""
         mem_keys = getattr(self._memory, "keys", lambda: [])()
         keys_list = ", ".join(mem_keys)
-        prompt = textwrap.dedent(
-            f"""
-            Decide if the following task should use an external API/tool or can be done with pure reasoning.
-            Reply with exactly one word: "tool" or "reasoning".
-
-            Task: {step.text}
-            Existing memory keys: {keys_list}
-            """
-        )
+        prompt = STEP_CLASSIFICATION_PROMPT.format(step_text=step.text, keys_list=keys_list)
         reply = self._call_llm(prompt).lower()
         if "reason" in reply:
             return Step.StepType.REASONING
