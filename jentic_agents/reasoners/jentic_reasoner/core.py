@@ -9,6 +9,7 @@ from __future__ import annotations
 from typing import Any, Deque, Dict, List, Optional, TypedDict
 import json
 from copy import deepcopy
+import textwrap
 
 from jentic_agents.reasoners.base_reasoner import BaseReasoner, ReasoningResult
 from ._models import ReasonerState, Step, Tool
@@ -21,8 +22,14 @@ from jentic_agents.memory.base_memory import BaseMemory
 from jentic_agents.utils.llm import BaseLLM
 from jentic_agents.utils.logger import get_logger
 import uuid
+import re
 
 logger = get_logger(__name__)
+
+# ---------------------------------------------------------------------------
+# Regex helpers used by reasoning-step executor
+# ---------------------------------------------------------------------------
+_JSON_FENCE_RE = re.compile(r"```(?:json)?\s*([\s\S]+?)\s*```")
 
 
 class ParameterValidationError(ValueError):
@@ -86,6 +93,15 @@ class JenticReasoner:
 
         while state.plan and not state.is_complete and iterations < max_iterations:
             step = state.plan.popleft()
+            # classify once
+            if step.step_type == Step.StepType.TOOL:  # only if not set already (default TOOL)
+                try:
+                    step.step_type = self._classify_step(step, state)
+                except Exception as exc:  # noqa: BLE001
+                    logger.warning("Classification failed %s", exc)
+                    step.step_type = Step.StepType.TOOL
+
+            logger.info("phase=ITERATION_START run_id=%s iter=%d type=%s text=%s", run_id, iterations, step.step_type.name, step.text)
             iterations += 1
             logger.info("phase=ITERATION_START run_id=%s iter=%d step_text=%s", run_id, iterations, step.text)
             try:
@@ -129,7 +145,7 @@ class JenticReasoner:
         inputs: Dict[str, Any] = {}
         for key in step.input_keys:
             try:
-                inputs[key] = self._memory.get(key)  # type: ignore[attr-defined]
+                inputs[key] = self._memory.retrieve(key)  # type: ignore[attr-defined]
             except Exception:  # noqa: BLE001
                 logger.warning("Missing required input key: %s", key)
                 raise MissingInputError(key)
@@ -160,6 +176,33 @@ class JenticReasoner:
     # ------------------------------------------------------------------
     # Core execution logic
     # ------------------------------------------------------------------
+    def _execute_reasoning_step(self, step: Step, inputs: Dict[str, Any]) -> Any:  # noqa: D401
+        """Execute a reasoning-only step via the LLM and return its output."""
+        # Make inputs printable
+        mem_snippet = json.dumps(inputs, ensure_ascii=False)
+        prompt = textwrap.dedent(
+            f"""
+            You are performing an internal reasoning sub-task.
+            Task: {step.text}
+            Relevant data (JSON): {mem_snippet}
+
+            Think step-by-step and output ONLY the final result. If the result is structured, return valid JSON.
+            """
+        )
+        reply = self._call_llm(prompt).strip()
+        # Try to extract fenced JSON
+        m = _JSON_FENCE_RE.search(reply)
+        if m:
+            reply = m.group(1).strip()
+        # Attempt JSON parse; fall back to raw text
+        try:
+            return json.loads(reply)
+        except Exception:
+            return reply
+
+    # ------------------------------------------------------------------
+    # Existing execute step, adapted for StepType
+    # ------------------------------------------------------------------
     def _execute_step(self, step: Step, state: ReasonerState) -> Dict[str, Any]:  # noqa: D401
         """Execute a single plan step with retry bookkeeping."""
         step.status = "running"
@@ -170,11 +213,15 @@ class JenticReasoner:
             self._reflect_on_failure(step, state, exc, error_type="MissingInputError")
             return {}
 
-        tool_id = self._select_tool(step)
-        if tool_id == "none":  # pure reasoning step
+        if step.step_type == Step.StepType.REASONING:
+            result = self._execute_reasoning_step(step, inputs)
             step.status = "done"
+            step.result = result
+            self._store_step_output(step, state)
             return {}
 
+        # TOOL path
+        tool_id = self._select_tool(step)
         params = self._generate_params(step, tool_id, inputs)
         try:
             result = self._jentic.execute(tool_id, params)
@@ -263,6 +310,27 @@ class JenticReasoner:
         if reply == "none":
             return True
         return any(t.id == reply for t in tools)
+
+        # ------------------------------------------------------------------
+    # Step classification
+    # ------------------------------------------------------------------
+    def _classify_step(self, step: Step, state: ReasonerState) -> Step.StepType:  # noqa: D401
+        """Heuristic LLM classifier deciding TOOL vs REASONING."""
+        mem_keys = getattr(self._memory, "keys", lambda: [])()
+        keys_list = ", ".join(mem_keys)
+        prompt = textwrap.dedent(
+            f"""
+            Decide if the following task should use an external API/tool or can be done with pure reasoning.
+            Reply with exactly one word: "tool" or "reasoning".
+
+            Task: {step.text}
+            Existing memory keys: {keys_list}
+            """
+        )
+        reply = self._call_llm(prompt).lower()
+        if "reason" in reply:
+            return Step.StepType.REASONING
+        return Step.StepType.TOOL
 
     # ------------------------------------------------------------------
     # Parameter generation

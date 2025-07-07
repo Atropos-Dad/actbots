@@ -3,6 +3,7 @@ from __future__ import annotations
 
 from collections import deque
 from typing import Any, Deque, List, Optional
+from enum import Enum, auto
 
 from pydantic import BaseModel, Field
 
@@ -33,6 +34,12 @@ class Step(BaseModel):
     # New fields for explicit data flow annotations
     output_key: Optional[str] = None  # snake_case key produced by this step
     input_keys: List[str] = Field(default_factory=list)  # keys this step consumes
+    # Execution modality of this step (tool vs reasoning)
+    class StepType(Enum):
+        TOOL = auto()
+        REASONING = auto()
+
+    step_type: "Step.StepType" = StepType.TOOL
     error: Optional[str] = None
     reflection_attempts: int = 0
     retry_count: int = 0
