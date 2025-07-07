@@ -142,6 +142,16 @@ FINAL_ANSWER_SYNTHESIS_PROMPT: str = (
 )
 
 
+REASONING_STEP_PROMPT: str = (
+    """
+    You are performing an internal reasoning sub-task.
+    Task: {step_text}
+    Relevant data (JSON): {mem_snippet}
+
+    Think step-by-step and output ONLY the final result. If the result is structured, return valid JSON.
+    """
+)
+
 STEP_CLASSIFICATION_PROMPT: str = (
     """
     Decide if the following task should use an external API/tool or can be done with pure reasoning.

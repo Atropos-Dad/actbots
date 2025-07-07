@@ -9,7 +9,7 @@ from __future__ import annotations
 from typing import Any, Deque, Dict, List, Optional, TypedDict
 import json
 from copy import deepcopy
-import textwrap
+
 
 from jentic_agents.reasoners.base_reasoner import BaseReasoner, ReasoningResult
 from ._models import ReasonerState, Step, Tool
@@ -24,7 +24,7 @@ from jentic_agents.utils.logger import get_logger
 import uuid
 import re
 
-from ._prompts import STEP_CLASSIFICATION_PROMPT
+from ._prompts import STEP_CLASSIFICATION_PROMPT, REASONING_STEP_PROMPT
 
 logger = get_logger(__name__)
 
@@ -195,15 +195,7 @@ class JenticReasoner:
         try:
             # Make inputs printable
             mem_snippet = json.dumps(inputs, ensure_ascii=False)
-            prompt = textwrap.dedent(
-                f"""
-                You are performing an internal reasoning sub-task.
-                Task: {step.text}
-                Relevant data (JSON): {mem_snippet}
-    
-                Think step-by-step and output ONLY the final result. If the result is structured, return valid JSON.
-                """
-            )
+            prompt = REASONING_STEP_PROMPT.format(step_text=step.text, mem_snippet=mem_snippet)
             reply = self._call_llm(prompt).strip()
             # Try to extract fenced JSON
             m = _JSON_FENCE_RE.search(reply)
