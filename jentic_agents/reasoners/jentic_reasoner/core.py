@@ -105,7 +105,8 @@ class JenticReasoner:
             logger.info("phase=ITERATION_START run_id=%s iter=%d type=%s text=%s", run_id, iterations, step.step_type.name, step.text)
             try:
                 result = self._execute_step(step, state)
-                tool_calls.append(result)
+                if result:
+                    tool_calls.append(result)
                 logger.info("phase=ITERATION_END run_id=%s iter=%d status=success", run_id, iterations)
             except ToolExecutionError as exc:
                 self._reflect_on_failure(step, state, exc, error_type="ToolExecutionError")
