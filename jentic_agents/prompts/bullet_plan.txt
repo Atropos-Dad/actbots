@@ -1,7 +1,7 @@
 {
   "instruction": "Generate a concrete, API-centric multi-step plan to accomplish the given goal using Jentic tools (search_apis, load_execution_info, execute, etc.). Your plan should assume the agent has access to Jentic's unified API hub where it can discover and run operations from many providers.",
 
-  "context": "Jentic workflow: 1) search_apis → 2) load_execution_info → 3) execute. The agent can chain multiple APIs across different vendors. Use already-known IDs (e.g., channel_id, guild_id) directly; only add discovery steps when information is missing. STEP IDENTIFICATION: Use multi-step when the goal requires data from one operation to complete another (dependency chain). Use single-step when all required information is directly available or can be inferred from the goal.",
+  "context": "Jentic workflow: 1) search_apis → 2) load_execution_info → 3) execute. The agent can chain multiple APIs across different vendors. Use already-known IDs (e.g., channel_id, guild_id) directly; only add discovery steps when information is missing. STEP IDENTIFICATION: Use multi-step when the goal requires data from one operation to complete another (dependency chain). Use single-step when all required information is directly available or can be inferred from the goal. If the goal has multiple genuinely different interpretations, escalate for clarification using: <escalate_to_human reason='need clarification' question='your specific question'/>, otherwise make reasonable assumptions about what the user likely wants.",
 
   "inputs": {
     "goal": "{goal}"

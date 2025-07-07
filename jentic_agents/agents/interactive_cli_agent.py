@@ -14,6 +14,7 @@ from rich.table import Table
 from .base_agent import BaseAgent
 from ..reasoners.base_reasoner import ReasoningResult
 
+
 logger = logging.getLogger(__name__)
 
 
@@ -26,7 +27,7 @@ class InteractiveCLIAgent(BaseAgent):
     """
     
     def __init__(self, *args, **kwargs):
-        """Initialize the interactive CLI agent."""
+        """Initialize the interactive CLI agent by passing through to BaseAgent."""
         super().__init__(*args, **kwargs)
         self._running = False
         self.console = Console()

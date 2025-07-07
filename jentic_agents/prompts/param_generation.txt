@@ -1,7 +1,7 @@
 {
   "instruction": "Generate appropriate input parameters for the selected API operation based on the user goal, agent memory, and available operation schema.",
 
-  "context": "Use the operation schema to understand required and optional parameters. Extract values from the user goal, memory, and context. Handle URL parsing when applicable.",
+  "context": "Use the operation schema to understand required and optional parameters. Extract values from the user goal, memory, and context. Handle URL parsing when applicable. If you are missing critical information that cannot be reasonably inferred, escalate for human input using: <escalate_to_human reason='missing parameters' question='your specific question'/>",
 
   "inputs": {
     "goal": "{goal}",
@@ -17,11 +17,11 @@
     "MEMORY REFERENCES: Use ${memory.key} for simple values or ${memory.key.field} for nested data from previous steps.",
     "URL PARSING: Extract IDs from URLs using these patterns: /board/ID, /repo/ID, /project/ID, /channel/ID - take the alphanumeric identifier after the resource type if structured this way.",
     "NEVER generate placeholder values like 'your_api_key', 'user_token', 'example_id', or similar fake data.",
-    "For missing parameters that can't be extracted, leave them out entirely rather than using placeholders.",
+    "For missing parameters that can't be extracted, escalate for human input rather than using placeholders.",
     "Include authentication parameters (key, token, etc.) if they appear in the schema as required - they will be automatically populated by Jentic during execution.",
     "Use appropriate data types: strings for text/IDs, numbers for counts/limits, booleans for flags.",
     "Keep parameter values concise and relevant to the goal.",
-    "PRIORITY ORDER: 1) Extract from goal text, 2) Parse from URLs, 3) Use memory references, 4) Omit if unavailable.",
+    "PRIORITY ORDER: 1) Extract from goal text, 2) Parse from URLs, 3) Use memory references, 4) Escalate for missing critical info.",
     "For list/array parameters, extract multiple values when the goal mentions multiple items."
   ],
 

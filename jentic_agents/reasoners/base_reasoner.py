@@ -11,6 +11,8 @@ class StepType(enum.Enum):
 
     TOOL_USING = "tool-using"
     REASONING = "reasoning"
+    SEARCH = "search"
+    EXECUTE = "execute"
 
 
 class ReasoningResult(BaseModel):
