@@ -11,8 +11,8 @@ import json
 from copy import deepcopy
 
 
-from jentic_agents.reasoners.base_reasoner import BaseReasoner, ReasoningResult
-from ._models import ReasonerState, Step, Tool
+from ..base_reasoner_v2 import BaseReasonerV2
+from ..models import ReasonerState, Step, Tool
 from ._parser import parse_bullet_plan
 from . import _prompts as prompts  # noqa: WPS433 (importing internal module)
 
@@ -20,13 +20,10 @@ from . import _prompts as prompts  # noqa: WPS433 (importing internal module)
 from jentic_agents.platform.jentic_client import JenticClient  # type: ignore
 from jentic_agents.memory.base_memory import BaseMemory
 from jentic_agents.utils.llm import BaseLLM
-from jentic_agents.utils.logger import get_logger
-import uuid
 import re
 
 from ._prompts import STEP_CLASSIFICATION_PROMPT, REASONING_STEP_PROMPT
 
-logger = get_logger(__name__)
 
 # ---------------------------------------------------------------------------
 # Regex helpers used by reasoning-step executor
@@ -52,20 +49,19 @@ class ReflectionDecision(TypedDict, total=False):
     step: str
 
 
-class JenticReasoner:
+class JenticReasoner(BaseReasonerV2):
     """Reasoner implementing ReWOO + Reflection on top of Jentic tools."""
 
     def __init__(
         self,
+        *,
         jentic_client: JenticClient,
         memory: BaseMemory,
         llm: BaseLLM,
     ) -> None:
-        self._jentic = jentic_client
-        self._memory = memory
+        super().__init__(jentic_client=jentic_client, memory=memory, llm=llm)
         # Cache loaded tool definitions to avoid redundant API calls
-        self._tool_cache: Dict[str, Tool] = {}
-        self._llm = llm
+        self._tool_cache: Dict[str, Any] = {}
 
         # ------------------------------------------------------------------
         # Internal helper wrappers
@@ -81,57 +77,10 @@ class JenticReasoner:
     # ---------------------------------------------------------------------
     # Public API
     # ---------------------------------------------------------------------
-    def run(self, goal: str, max_iterations: int = 10) -> ReasoningResult:  # noqa: D401
-        """Execute the reasoning loop until completion or exhaustion."""
-        run_id = uuid.uuid4().hex[:8]
-        self._run_id = run_id
-        logger.info("phase=PLAN_START run_id=%s goal=%s", run_id, goal)
-        state = ReasonerState(goal=goal)
-        self._generate_plan(state)
-        logger.info("phase=PLAN_DONE run_id=%s steps=%d", run_id, len(state.plan))
-
-        iterations = 0
-        tool_calls: List[Dict[str, Any]] = []
-
-        while state.plan and not state.is_complete and iterations < max_iterations:
-            step = state.plan.popleft()
-            iterations += 1
-            # classify once
-            if step.step_type == Step.StepType.TOOL:  # only if not set already (default TOOL)
-                try:
-                    step.step_type = self._classify_step(step, state)
-                except Exception as exc:  # noqa: BLE001
-                    logger.warning("Classification failed %s", exc)
-                    step.step_type = Step.StepType.TOOL
-
-            logger.info("phase=ITERATION_START run_id=%s iter=%d type=%s text=%s", run_id, iterations, step.step_type.name, step.text)
-            try:
-                result = self._execute_step(step, state)
-                if result:
-                    tool_calls.append(result)
-                logger.info("phase=ITERATION_END run_id=%s iter=%d status=success", run_id, iterations)
-            except ToolExecutionError as exc:
-                self._reflect_on_failure(step, state, exc, error_type="ToolExecutionError")
-            except ParameterValidationError as exc:
-                self._reflect_on_failure(step, state, exc, error_type="ParameterValidationError")
-            except Exception as exc:  # noqa: BLE001
-                # Fallback catch-all
-                self._reflect_on_failure(step, state, exc, error_type="UnexpectedError")
-
-        # Mark completion if no more steps queued
-        if not state.plan:
-            state.is_complete = True
-
-        final_answer = self._synthesize_final_answer(state)
-        success = state.is_complete and not state.plan
-        logger.info("phase=FINAL run_id=%s success=%s", run_id, success)
-        return ReasoningResult(
-            final_answer=final_answer,
-            iterations=iterations,
-            tool_calls=tool_calls,
-            success=success,
-            error_message=None if success else "Reasoner did not finish successfully.",
-        )
+    # Delegates orchestration to BaseReasonerV2
+    def run(self, goal: str, max_iterations: int = 20):  # noqa: D401
+        """Thin wrapper that calls the shared BaseReasonerV2 run()."""
+        return super().run(goal, max_iterations)
 
     # ------------------------------------------------------------------
     # Private helpers – to be fully implemented in later steps
@@ -140,7 +89,7 @@ class JenticReasoner:
         """Generate initial plan from goal using the LLM."""
         prompt = prompts.PLAN_GENERATION_PROMPT.replace("{goal}", state.goal)
         plan_md = self._call_llm(prompt)
-        logger.info(f"phase=PLAN_GENERATED run_id={self._run_id} plan={plan_md}")
+        self._logger.info(f"phase=PLAN_GENERATED plan={plan_md}")
         state.plan = parse_bullet_plan(plan_md)
 
     # ------------------------------------------------------------------
@@ -153,10 +102,11 @@ class JenticReasoner:
             try:
                 inputs[key] = self._memory.retrieve(key)  # type: ignore[attr-defined]
             except Exception:  # noqa: BLE001
-                logger.warning("Missing required input key: %s", key)
+                self._logger.warning("Missing required input key: %s", key)
                 raise MissingInputError(key)
         return inputs
 
+    # TODO: check if this is necessary
     def _merge_inputs(self, base: Dict[str, Any], inputs: Dict[str, Any]) -> Dict[str, Any]:
         """Overlay fetched inputs onto LLM-generated params (inputs win)."""
         merged = base.copy()
@@ -179,13 +129,13 @@ class JenticReasoner:
                 self._memory.store(step.output_key, value_to_store)
                 snippet = str(value_to_store).replace("\n", " ")
                 state.history.append(f"stored {step.output_key}: {snippet}")
-                logger.info(
+                self._logger.info(
                     "phase=MEM_STORE run_id=%s key=%s",
                     getattr(self, "_run_id", "NA"),
                     step.output_key,
                 )
             except Exception as exc:  # noqa: BLE001
-                logger.warning("Could not store result for key '%s': %s", step.output_key, exc)
+                self._logger.warning("Could not store result for key '%s': %s", step.output_key, exc)
 
     # ------------------------------------------------------------------
     # Core execution logic
@@ -217,7 +167,7 @@ class JenticReasoner:
             # resolve inputs first
             inputs = self._fetch_inputs(step)
         except MissingInputError as exc:
-            self._reflect_on_failure(step, state, exc, error_type="MissingInputError")
+            self._reflect_on_failure(exc, step, state)
             return {}
 
         if step.step_type == Step.StepType.REASONING:
@@ -232,9 +182,9 @@ class JenticReasoner:
         params = self._generate_params(step, tool_id, inputs)
         try:
             result = self._jentic.execute(tool_id, params)
-            logger.info("phase=EXECUTE_OK run_id=%s tool_id=%s", getattr(self, '_run_id', 'NA'), tool_id)
+            self._logger.info("phase=EXECUTE_OK run_id=%s tool_id=%s", getattr(self, '_run_id', 'NA'), tool_id)
         except Exception as exc:  # noqa: BLE001
-            logger.warning("phase=EXECUTE_FAIL run_id=%s tool_id=%s error=%s", getattr(self, '_run_id', 'NA'), tool_id, exc)
+            self._logger.warning("phase=EXECUTE_FAIL run_id=%s tool_id=%s error=%s", getattr(self, '_run_id', 'NA'), tool_id, exc)
             raise ToolExecutionError(str(exc)) from exc
 
         step.status = "done"
@@ -246,7 +196,7 @@ class JenticReasoner:
     def _select_tool(self, step: Step) -> str:  # noqa: D401
         """Search Jentic for relevant tools and ask the LLM to pick one."""
         tools = self._search_tools(step)
-        logger.info("phase=SELECT_SEARCH run_id=%s step_text=%s hits=%s", getattr(self, '_run_id', 'NA'), step.text, [f"{t.id}:{t.name}" for t in tools])
+        self._logger.info("phase=SELECT_SEARCH run_id=%s step_text=%s hits=%s", getattr(self, '_run_id', 'NA'), step.text, [f"{t.id}:{t.name}" for t in tools])
         tools_json = json.dumps([
             {
                 "id": t.id,
@@ -296,21 +246,20 @@ class JenticReasoner:
             )
         return tools
 
-    def _get_tool(self, tool_id: str, summary: Optional[Dict[str, Any]] = None) -> Tool:
+    def _get_tool(self, tool_id: str, summary: Optional[Dict[str, Any]] = None) -> dict[str, Any]:
         """Return Tool metadata, loading full definition if necessary."""
         if tool_id in self._tool_cache:
             return self._tool_cache[tool_id]
 
-        if summary is None:
-            summary = {"id": tool_id, "name": "unknown", "description": ""}
-
         # Load detailed definition (parameters etc.)
         try:
             tool_execution_info = self._jentic.load(tool_id)
-        except Exception:
-            parameters = {}
-        self._tool_cache[tool_id] = tool_execution_info
-        return tool_execution_info
+            self._tool_cache[tool_id] = tool_execution_info
+            return tool_execution_info
+        except Exception as exc:  # noqa: BLE001
+            self._logger.warning("Could not load tool execution info Tool: %s Error: %s", tool_id, exc)
+            return {}
+
 
     def _is_valid_tool_reply(self, reply: str, tools: List[Tool]) -> bool:
         """Check if the LLM reply is a valid tool id or 'none'."""
@@ -351,7 +300,7 @@ class JenticReasoner:
             params = self._parse_json_or_retry(raw, prompt)
             # merge concrete inputs
             params = self._merge_inputs(params, inputs)
-            logger.info("phase=PARAMS_DONE run_id=%s tool_id=%s param_keys=%s", getattr(self, '_run_id', 'NA'), tool_id, list(params.keys()))
+            self._logger.info("phase=PARAMS_DONE run_id=%s tool_id=%s param_keys=%s", getattr(self, '_run_id', 'NA'), tool_id, list(params.keys()))
             # Basic structural validation: ensure keys exist in schema if schema provided
             # if tool_execution_info['parameters']:
             #     unknown_keys = [k for k in params.keys() if k not in tool_execution_info['parameters']]
@@ -363,7 +312,7 @@ class JenticReasoner:
                       if k in tool_execution_info["parameters"]}
             return params
         except Exception as exc:  # noqa: BLE001
-            logger.exception("Error in parameter generation : %s", exc)
+            self._logger.exception("Error in parameter generation : %s", exc)
             raise ParameterValidationError(f"Failed to generate parameters for tool {tool_id}") from exc
 
     # ------------------------------------------------------------------
@@ -386,11 +335,9 @@ class JenticReasoner:
 
     def _reflect_on_failure(
         self,
+        error: Exception,
         step: Step,
         state: ReasonerState,
-        error: Exception,
-        *,
-        error_type: str,
     ) -> None:  # noqa: D401
         """Invoke reflection logic and possibly modify the plan."""
         step.status = "failed"
@@ -402,11 +349,12 @@ class JenticReasoner:
 
         tool_schema = {}
         try:
-            current_tool = self._get_tool(self._select_tool(step))
-            tool_schema = current_tool.parameters
+            tool_execution_info = self._get_tool(self._select_tool(step))
+            tool_schema = tool_execution_info['parameters']
         except Exception:
             pass
 
+        error_type = error.__class__.__name__
         prompt = prompts.REFLECTION_PROMPT.format(
             goal=state.goal,
             step=step.text,

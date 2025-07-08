@@ -17,7 +17,7 @@ from typing import Deque, List
 from jentic_agents.utils.logger import get_logger
 
 
-from ._models import Step
+from ..models import Step
 
 # Two spaces per indent level keeps markdown compatibility.
 _INDENT_SIZE = 2
