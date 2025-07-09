@@ -1,4 +1,4 @@
-"""Core orchestration logic for the JenticReasoner.
+"""Core orchestration logic for the ReWOO Reasoner with JenticTools.
 
 This skeleton follows the ReWOO (plan first, then bind tools) + Reflection
 paradigm.
@@ -9,20 +9,17 @@ from typing import Any, Dict
 import json
 from copy import deepcopy
 
-from .exceptions import MissingInputError, ToolExecutionError, ReasoningStepError
-from ..rewoo_reasoner_contract import BaseReasonerV2
-from ..jentic_toolbag import JenticToolBag
-from ..models import ReasonerState, Step
-from ._parser import parse_bullet_plan
-from . import _prompts as prompts  # noqa: WPS433 (importing internal module)
+from jentic_agents.reasoners.rewoo_reasoner.exceptions import MissingInputError, ToolExecutionError, ReasoningStepError
+from jentic_agents.reasoners.rewoo_reasoner_contract import BaseReasonerV2
+from jentic_agents.reasoners.jentic_toolbag import JenticToolBag
+from jentic_agents.reasoners.models import ReasonerState, Step
+from jentic_agents.reasoners.rewoo_reasoner._parser import parse_bullet_plan
+import jentic_agents.reasoners.rewoo_reasoner._prompts as prompts  # noqa: WPS433 (importing internal module)
 
 from jentic_agents.platform.jentic_client import JenticClient  # type: ignore
 from jentic_agents.memory.base_memory import BaseMemory
 from jentic_agents.utils.llm import BaseLLM
 import re
-
-from ._prompts import STEP_CLASSIFICATION_PROMPT, REASONING_STEP_PROMPT
-
 
 class JenticReasoner(JenticToolBag, BaseReasonerV2):
     """Reasoner implementing ReWOO + Reflection on top of Jentic tools."""
@@ -37,17 +34,7 @@ class JenticReasoner(JenticToolBag, BaseReasonerV2):
         super().__init__(jentic_client=jentic_client, memory=memory, llm=llm)
 
 
-    def _call_llm(self, prompt: str, **kwargs) -> str:
-        """Send a single-turn user prompt to the LLM and return assistant content."""
-        messages = [
-            {"role": "user", "content": prompt},
-        ]
-        return self._llm.chat(messages, **kwargs).strip()
-
-
-    # Delegates orchestration to BaseReasonerV2
     def run(self, goal: str, max_iterations: int = 20):  # noqa: D401
-        """Thin wrapper that calls the shared BaseReasonerV2 run()."""
         return super().run(goal, max_iterations)
 
     def _generate_plan(self, state: ReasonerState) -> None:
@@ -62,7 +49,6 @@ class JenticReasoner(JenticToolBag, BaseReasonerV2):
         """Execute a single plan step with retry bookkeeping."""
         step.status = "running"
         try:
-            # resolve inputs first
             inputs = self._fetch_inputs(step)
         except MissingInputError as exc:
             self._reflect_on_failure(exc, step, state)
@@ -75,7 +61,6 @@ class JenticReasoner(JenticToolBag, BaseReasonerV2):
             self._store_step_output(step, state)
             return None
 
-        # TOOL path
         tool_id = self._select_tool(step)
         params = self._generate_params(step, tool_id, inputs)
         try:
@@ -156,13 +141,26 @@ class JenticReasoner(JenticToolBag, BaseReasonerV2):
         """Heuristic LLM classifier deciding TOOL vs REASONING."""
         mem_keys = getattr(self._memory, "keys", lambda: [])()
         keys_list = ", ".join(mem_keys)
-        prompt = STEP_CLASSIFICATION_PROMPT.format(step_text=step.text, keys_list=keys_list)
+        prompt = prompts.STEP_CLASSIFICATION_PROMPT.format(step_text=step.text, keys_list=keys_list)
         reply = self._call_llm(prompt).lower()
         print("Step Classified as :", reply)
         if "reason" in reply:
             return Step.StepType.REASONING
         return Step.StepType.TOOL
 
+    def _execute_reasoning_step(self, step: Step, inputs: Dict[str, Any]) -> Any:  # noqa: D401
+        """Execute a reasoning-only step via the LLM and return its output."""
+        try:
+            mem_snippet = json.dumps(inputs, ensure_ascii=False)
+            prompt = prompts.REASONING_STEP_PROMPT.format(step_text=step.text, mem_snippet=mem_snippet)
+            reply = self._call_llm(prompt).strip()
+            _JSON_FENCE_RE = re.compile(r"```(?:json)?\s*([\s\S]+?)\s*```")
+            m = _JSON_FENCE_RE.search(reply)
+            if m:
+                reply = m.group(1).strip()
+            return json.loads(reply)
+        except Exception as exec:
+            raise ReasoningStepError(str(exec))
 
     def _fetch_inputs(self, step: Step) -> Dict[str, Any]:
         """Retrieve all required inputs from memory or raise ``ge``."""
@@ -174,14 +172,6 @@ class JenticReasoner(JenticToolBag, BaseReasonerV2):
                 self._logger.warning("Missing required input key: %s", key)
                 raise MissingInputError(key)
         return inputs
-
-    # TODO: check if this is necessary
-    def _merge_inputs(self, base: Dict[str, Any], inputs: Dict[str, Any]) -> Dict[str, Any]:
-        """Overlay fetched inputs onto LLM-generated params (inputs win)."""
-        merged = base.copy()
-        merged.update(inputs)
-        return merged
-
 
     def _store_step_output(self, step: Step, state: ReasonerState) -> None:
         """Persist a successful step's result under its `output_key`.
@@ -207,21 +197,9 @@ class JenticReasoner(JenticToolBag, BaseReasonerV2):
             except Exception as exc:  # noqa: BLE001
                 self._logger.warning("Could not store result for key '%s': %s", step.output_key, exc)
 
-
-    def _execute_reasoning_step(self, step: Step, inputs: Dict[str, Any]) -> Any:  # noqa: D401
-        """Execute a reasoning-only step via the LLM and return its output."""
-        try:
-            # Make inputs printable
-            mem_snippet = json.dumps(inputs, ensure_ascii=False)
-            prompt = REASONING_STEP_PROMPT.format(step_text=step.text, mem_snippet=mem_snippet)
-            reply = self._call_llm(prompt).strip()
-            # Try to extract fenced JSON
-            _JSON_FENCE_RE = re.compile(r"```(?:json)?\s*([\s\S]+?)\s*```")
-            m = _JSON_FENCE_RE.search(reply)
-            if m:
-                reply = m.group(1).strip()
-            # Attempt JSON parse; fall back to raw text
-
-            return json.loads(reply)
-        except Exception as exec:
-            raise ReasoningStepError(str(exec))
+    def _call_llm(self, prompt: str, **kwargs) -> str:
+        """Send a single-turn user prompt to the LLM and return assistant content."""
+        messages = [
+            {"role": "user", "content": prompt},
+        ]
+        return self._llm.chat(messages, **kwargs).strip()
