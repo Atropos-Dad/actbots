@@ -40,16 +40,25 @@ import argparse
 import os
 import sys
 from dotenv import load_dotenv
+
 from jentic_agents.utils.logger import get_logger
 from jentic_agents.agents.interactive_cli_agent import InteractiveCLIAgent
-from jentic_agents.agents.simple_ui_agent import SimpleUIAgent
 from jentic_agents.communication import CLIController
 from jentic_agents.memory.scratch_pad import ScratchPadMemory
 from jentic_agents.communication.inbox.cli_inbox import CLIInbox
 from jentic_agents.platform.jentic_client import JenticClient
 from jentic_agents.reasoners.bullet_list_reasoner import BulletPlanReasoner
 from jentic_agents.utils.llm import LiteLLMChatLLM
-from jentic_agents.utils.config import get_config_value
+from jentic_agents.utils.config import get_config_value, get_discord_config
+
+# Discord imports (optional)
+try:
+    import discord
+    from discord.ext import commands
+    from jentic_agents.communication.discord_controller import DiscordController
+    DISCORD_AVAILABLE = True
+except ImportError:
+    DISCORD_AVAILABLE = False
 
 get_logger(__name__)
 
@@ -88,8 +97,15 @@ def main():
         print("ERROR: Missing JENTIC_API_KEY in your .env file.")
         sys.exit(1)
 
-    if provider == "gemini" and not os.getenv("GEMINI_API_KEY"):
-        print("ERROR: LLM provider is Gemini but GEMINI_API_KEY is not set in .env.")
+    provider = get_config_value("llm", "provider", default="openai")
+    api_key_map = {
+        "openai": "OPENAI_API_KEY",
+        "gemini": "GEMINI_API_KEY", 
+        "anthropic": "ANTHROPIC_API_KEY"
+    }
+    
+    if provider in api_key_map and not os.getenv(api_key_map[provider]):
+        print(f"ERROR: LLM provider is {provider} but {api_key_map[provider]} is not set in .env.")
         sys.exit(1)
 
     if provider == "openai" and not os.getenv("OPENAI_API_KEY"):
@@ -237,14 +253,42 @@ def main():
         else:
             agent.spin()
 
-    except ImportError as e:
-        print(f"ERROR: A required package is not installed. {e}")
-        print("Please make sure you have run 'pip install -r requirements.txt'.")
-        sys.exit(1)
 
+def main():
+    parser = argparse.ArgumentParser(description="ActBots Live Demo")
+    parser.add_argument(
+        "--mode", 
+        choices=["cli", "discord"], 
+        default="cli",
+        help="Interface mode: 'cli' for command line, 'discord' for Discord bot (default: cli)"
+    )
+    args = parser.parse_args()
+
+    load_dotenv()
+    validate_api_keys()
+    
+    mode_name = {"cli": "CLI", "discord": "Discord"}[args.mode]
+    print(f"Starting ActBots ({mode_name} Mode)")
+    print("=" * 50)
+
+    if args.mode == "cli":
+        print("Type your goal below, or 'quit' to exit.")
+    elif args.mode == "discord":
+        print("Starting Discord bot...")
+    print("-" * 50)
+
+    try:
+        # Setup agent based on mode
+        agent, bot, discord_token, controller = setup_agent(args.mode)
+
+        # Run the agent
+        run_agent(args.mode, agent, bot, discord_token, controller)
+
+    except (ImportError, ValueError) as e:
+        print(f"ERROR: {e}")
+        sys.exit(1)
     except Exception as e:
         print(f"An unexpected error occurred: {e}")
-        logging.error("An unexpected error occurred during the demo.", exc_info=True)
         sys.exit(1)
 
     print("-" * 50)
