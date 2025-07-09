@@ -9,10 +9,10 @@ from typing import Any, Dict
 import json
 from copy import deepcopy
 
-from .exceptions import MissingInputError, ToolExecutionError
+from .exceptions import MissingInputError, ToolExecutionError, ReasoningStepError
 from ..rewoo_reasoner_contract import BaseReasonerV2
 from ..jentic_toolbag import JenticToolBag
-from ..models import ReasonerState, Step, Tool
+from ..models import ReasonerState, Step
 from ._parser import parse_bullet_plan
 from . import _prompts as prompts  # noqa: WPS433 (importing internal module)
 
@@ -223,5 +223,5 @@ class JenticReasoner(JenticToolBag, BaseReasonerV2):
             # Attempt JSON parse; fall back to raw text
 
             return json.loads(reply)
-        except Exception as e:
-            return reply
+        except Exception as exec:
+            raise ReasoningStepError(str(exec))
