@@ -21,9 +21,6 @@ dependencies = [
     "ruff>=0.12.2",
 ]
 
-[tool.uv]
-python = ">=3.13"
-
 [tool.actbots]
 [tool.actbots.logging]
 
