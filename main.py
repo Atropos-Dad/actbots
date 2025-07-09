@@ -37,15 +37,10 @@ SETUP INSTRUCTIONS:
 """
 
 import argparse
-import logging
 import os
 import sys
-
 from dotenv import load_dotenv
-
-# Add the package to the path
-sys.path.insert(0, os.path.dirname(__file__))
-
+from jentic_agents.utils.logger import get_logger
 from jentic_agents.agents.interactive_cli_agent import InteractiveCLIAgent
 from jentic_agents.agents.simple_ui_agent import SimpleUIAgent
 from jentic_agents.communication import CLIController
@@ -53,22 +48,10 @@ from jentic_agents.memory.scratch_pad import ScratchPadMemory
 from jentic_agents.communication.inbox.cli_inbox import CLIInbox
 from jentic_agents.platform.jentic_client import JenticClient
 from jentic_agents.reasoners.bullet_list_reasoner import BulletPlanReasoner
-
 from jentic_agents.utils.llm import LiteLLMChatLLM
-from jentic_agents.utils.config import get_config, get_config_value
+from jentic_agents.utils.config import get_config_value
 
-# Discord imports (optional)
-try:
-    import discord
-    from discord.ext import commands
-    from jentic_agents.communication.discord_controller import DiscordController
-    DISCORD_AVAILABLE = True
-except ImportError:
-    DISCORD_AVAILABLE = False
-
-logging.getLogger("litellm").setLevel(logging.WARNING)
-logging.getLogger("LiteLLM").setLevel(logging.WARNING)
-
+get_logger(__name__)
 
 def main():
 
@@ -82,34 +65,9 @@ def main():
     args = parser.parse_args()
 
     load_dotenv()
-    
-    # Initialize the logger singleton to set up file and console handlers
-    from jentic_agents.utils.logger import get_logger
-    
-    # Configure logging with forced flushing for real-time output
-    class FlushingStreamHandler(logging.StreamHandler):
-        def emit(self, record):
-            super().emit(record)
-            self.flush()  # Force flush after every log message
-    
-    # Initialize logger singleton first (sets up file handler)
-    logger = get_logger("main")
-    
-    # Get root logger and update console handler to use flushing
-    root_logger = logging.getLogger()
-    
-    # Find and replace the console handler with flushing version
-    for handler in root_logger.handlers[:]:
-        if isinstance(handler, logging.StreamHandler) and not isinstance(handler, logging.FileHandler):
-            root_logger.removeHandler(handler)
-            # Add flushing console handler
-            console_handler = FlushingStreamHandler(sys.stdout)
-            console_handler.setFormatter(handler.formatter)
-            console_handler.setLevel(handler.level)
-            root_logger.addHandler(console_handler)
-    
-    root_logger.setLevel(logging.INFO)
-    
+    logging.basicConfig(
+        level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s"
+    )
     logging.getLogger("openai").setLevel(logging.WARNING)
     logging.getLogger("httpx").setLevel(logging.WARNING)
 
