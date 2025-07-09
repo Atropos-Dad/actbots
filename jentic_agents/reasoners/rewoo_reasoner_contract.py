@@ -20,10 +20,10 @@ from jentic_agents.memory.base_memory import BaseMemory
 from jentic_agents.utils.llm import BaseLLM
 from jentic_agents.utils.logger import get_logger
 
-__all__ = ["BaseReasonerV2"]
+__all__ = ["BaseReWOOReasoner"]
 
 
-class BaseReasonerV2(ABC):
+class BaseReWOOReasoner(ABC):
     """Abstract *plan-first* reasoner.
 
     Concrete subclasses must implement:

@@ -10,7 +10,7 @@ import json
 from copy import deepcopy
 
 from jentic_agents.reasoners.rewoo_reasoner.exceptions import MissingInputError, ToolExecutionError, ReasoningStepError
-from jentic_agents.reasoners.rewoo_reasoner_contract import BaseReasonerV2
+from jentic_agents.reasoners.rewoo_reasoner_contract import BaseReWOOReasoner
 from jentic_agents.reasoners.jentic_toolbag import JenticToolBag
 from jentic_agents.reasoners.models import ReasonerState, Step
 from jentic_agents.reasoners.rewoo_reasoner._parser import parse_bullet_plan
@@ -21,7 +21,7 @@ from jentic_agents.memory.base_memory import BaseMemory
 from jentic_agents.utils.llm import BaseLLM
 import re
 
-class JenticReasoner(JenticToolBag, BaseReasonerV2):
+class JenticReWOOReasoner(JenticToolBag, BaseReWOOReasoner):
     """Reasoner implementing ReWOO + Reflection on top of Jentic tools."""
 
     def __init__(
