@@ -77,6 +77,11 @@ class BaseReasonerV2(ABC):
             iteration += 1
             step = state.plan.popleft()
             log.info("→ Iteration %d | step='%s' (indent=%d)" % (iteration, step.text, step.indent))
+
+            # Classify step type before execution
+            step.step_type = self._classify_step(step, state)
+            log.info("Step classified as: %s", step.step_type)
+
             try:
                 meta = self._execute_step(step, state) or {}
                 if isinstance(meta, dict):
@@ -132,3 +137,7 @@ class BaseReasonerV2(ABC):
     @abstractmethod
     def _synthesize_final_answer(self, state: ReasonerState) -> str:  # pragma: no cover
         """Combine state/history into the final user-facing answer."""
+
+    @abstractmethod
+    def _classify_step(self, step: Step, state: ReasonerState) -> Step.StepType:  # pragma: no cover
+        """Determine if a step is a TOOL step or a REASONING step."""
