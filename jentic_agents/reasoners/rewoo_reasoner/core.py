@@ -11,7 +11,7 @@ import json
 from copy import deepcopy
 
 
-from ..base_reasoner_v2 import BaseReasonerV2
+from ..rewoo_reasoner_contract import BaseReasonerV2
 from ..models import ReasonerState, Step, Tool
 from ._parser import parse_bullet_plan
 from . import _prompts as prompts  # noqa: WPS433 (importing internal module)
@@ -40,13 +40,6 @@ class MissingInputError(KeyError):
 
 class ToolExecutionError(RuntimeError):
     """Raised when executing a tool fails."""
-
-
-class ReflectionDecision(TypedDict, total=False):
-    action: str
-    tool_id: str
-    params: Dict[str, Any]
-    step: str
 
 
 class JenticReasoner(BaseReasonerV2):
