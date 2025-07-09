@@ -33,8 +33,6 @@ PLAN_GENERATION_PROMPT: str = (
     ```
     - fetch recent NYT articles mentioning “artificial intelligence” (output: nyt_articles)
       → if fails: report that article search failed.
-    - extract title and URL from each item (input: nyt_articles) (output: article_list)
-      → if fails: report that no articles were found.
     - send articles as a Discord message to Discord channel 12345 (input: article_list) (output: post_confirmation)
       → if fails: notify the user that posting to Discord failed.
     ```
@@ -156,6 +154,10 @@ STEP_CLASSIFICATION_PROMPT: str = (
     """
     Decide if the following task should use an external API/tool or can be done with pure reasoning.
     Reply with exactly one word: "tool" or "reasoning".
+    STRICT RULE:
+    - If the task requires an external API/tool, reply with "tool".
+    - If the task can be done with pure reasoning, reply with "reasoning".
+    - No additional text, no markdown, no backticks, no ```json blocks.
 
     Task: {step_text}
     Existing memory keys: {keys_list}

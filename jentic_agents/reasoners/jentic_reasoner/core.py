@@ -175,7 +175,7 @@ class JenticReasoner(BaseReasonerV2):
             step.status = "done"
             step.result = result
             self._store_step_output(step, state)
-            return {}
+            return None
 
         # TOOL path
         tool_id = self._select_tool(step)
@@ -276,6 +276,7 @@ class JenticReasoner(BaseReasonerV2):
         keys_list = ", ".join(mem_keys)
         prompt = STEP_CLASSIFICATION_PROMPT.format(step_text=step.text, keys_list=keys_list)
         reply = self._call_llm(prompt).lower()
+        print("Step Classified as :", reply)
         if "reason" in reply:
             return Step.StepType.REASONING
         return Step.StepType.TOOL
@@ -391,4 +392,5 @@ class JenticReasoner(BaseReasonerV2):
         goal=state.goal,
         history="\n".join(state.history),
     )
+        state.is_complete = True
         return self._call_llm(prompt)

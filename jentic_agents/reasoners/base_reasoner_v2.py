@@ -12,6 +12,8 @@ from __future__ import annotations
 from abc import ABC, abstractmethod
 from typing import Any, Dict, List
 
+from jentic_agents.reasoners.models import ReasoningResult
+
 from jentic_agents.reasoners.models import ReasonerState, Step
 from jentic_agents.platform.jentic_client import JenticClient  # type: ignore
 from jentic_agents.memory.base_memory import BaseMemory
@@ -52,7 +54,7 @@ class BaseReasonerV2(ABC):
     # Public API
     # ------------------------------------------------------------------
 
-    def run(self, goal: str, max_iterations: int = 20) -> Dict[str, Any]:  # noqa: D401
+    def run(self, goal: str, max_iterations: int = 20) -> ReasoningResult:  # noqa: D401
         """Execute the reasoning loop until completion or iteration cap.
 
         Returns a lightweight dict with summary metadata.  Sub-classes may
@@ -83,7 +85,7 @@ class BaseReasonerV2(ABC):
             log.info("Step classified as: %s", step.step_type)
 
             try:
-                meta = self._execute_step(step, state) or {}
+                meta = self._execute_step(step, state)
                 if isinstance(meta, dict):
                     tool_calls.append(meta)
             except Exception as exc:  # noqa: BLE001
@@ -99,12 +101,12 @@ class BaseReasonerV2(ABC):
         success = state.is_complete
         log.info("=== REASONER END === success=%s iterations=%d", success, iteration)
 
-        return {
-            "answer": final_answer,
-            "iterations": iteration,
-            "tool_calls": tool_calls,
-            "success": success,
-        }
+        return ReasoningResult(
+            final_answer=final_answer,
+            iterations=iteration,
+            tool_calls=tool_calls,
+            success=success,
+        )
 
     # ------------------------------------------------------------------
     # Sub-class hooks

@@ -16,6 +16,7 @@ __all__ = [
     "Step",
     "Tool",
     "ReasonerState",
+    "ReasoningResult",
 ]
 
 
@@ -77,3 +78,14 @@ class ReasonerState(BaseModel):
     plan: Deque[Step] = Field(default_factory=deque)
     history: List[str] = Field(default_factory=list)
     is_complete: bool = False
+
+
+class ReasoningResult(BaseModel):
+    """Lightweight summary returned by a Reasoner run."""
+
+    final_answer: str
+    iterations: int
+    tool_calls: List[dict[str, Any]]
+    success: bool
+    error_message: str | None = None
+
