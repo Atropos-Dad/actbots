@@ -9,21 +9,30 @@ SETUP INSTRUCTIONS:
    - OPENAI_API_KEY: If using OpenAI as LLM provider
    - GEMINI_API_KEY: If using Gemini as LLM provider
    - ANTHROPIC_API_KEY: If using Anthropic as LLM provider
+   - DISCORD_BOT_TOKEN: Your Discord bot token (for Discord mode)
 
 3. Edit `config.json` to set your desired LLM provider and model, e.g.:
    {
      "llm": {
        "provider": "openai",    // or "gemini", or "anthropic"
        "model": "gpt-4o"        // or your preferred model 
+     },
+     "discord": {
+       "enabled": true,         // Enable Discord mode
+       "target_user_id": 123456789,  // Your Discord user ID for escalations
+       "monitored_channels": [987654321],  // Channel IDs to monitor
+       "default_channel_id": 987654321     // Default channel for responses
      }
    }
 
 4. Install dependencies:
    pip install -r requirements.txt
+   For Discord mode, also install: pip install discord.py
 
 5. Run the demo:
    - CLI mode: python main.py or python main.py --mode cli
    - UI mode:  python main.py --mode ui
+   - Discord mode: python main.py --mode discord
 -----------------------------
 """
 
@@ -51,6 +60,15 @@ from jentic_agents.reasoners.standard_reasoner import StandardReasoner
 from jentic_agents.utils.llm import LiteLLMChatLLM
 from jentic_agents.utils.config import get_config, get_config_value
 
+# Discord imports (optional)
+try:
+    import discord
+    from discord.ext import commands
+    from jentic_agents.communication.discord_controller import DiscordController
+    DISCORD_AVAILABLE = True
+except ImportError:
+    DISCORD_AVAILABLE = False
+
 logging.getLogger("litellm").setLevel(logging.WARNING)
 logging.getLogger("LiteLLM").setLevel(logging.WARNING)
 
@@ -59,23 +77,52 @@ def main():
     parser = argparse.ArgumentParser(description="ActBots Live Demo")
     parser.add_argument(
         "--mode", 
-        choices=["cli", "ui"], 
+        choices=["cli", "ui", "discord"], 
         default="cli",
-        help="Interface mode: 'cli' for command line, 'ui' for graphical interface (default: cli)"
+        help="Interface mode: 'cli' for command line, 'ui' for graphical interface, 'discord' for Discord bot (default: cli)"
     )
     args = parser.parse_args()
 
     load_dotenv()
-    logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+    
+    # Initialize the logger singleton to set up file and console handlers
+    from jentic_agents.utils.logger import get_logger
+    
+    # Configure logging with forced flushing for real-time output
+    class FlushingStreamHandler(logging.StreamHandler):
+        def emit(self, record):
+            super().emit(record)
+            self.flush()  # Force flush after every log message
+    
+    # Initialize logger singleton first (sets up file handler)
+    logger = get_logger("main")
+    
+    # Get root logger and update console handler to use flushing
+    root_logger = logging.getLogger()
+    
+    # Find and replace the console handler with flushing version
+    for handler in root_logger.handlers[:]:
+        if isinstance(handler, logging.StreamHandler) and not isinstance(handler, logging.FileHandler):
+            root_logger.removeHandler(handler)
+            # Add flushing console handler
+            console_handler = FlushingStreamHandler(sys.stdout)
+            console_handler.setFormatter(handler.formatter)
+            console_handler.setLevel(handler.level)
+            root_logger.addHandler(console_handler)
+    
+    root_logger.setLevel(logging.INFO)
+    
     logging.getLogger("openai").setLevel(logging.WARNING)
     logging.getLogger("httpx").setLevel(logging.WARNING)
 
-    mode_name = "CLI" if args.mode == "cli" else "UI"
+    mode_name = {"cli": "CLI", "ui": "UI", "discord": "Discord"}[args.mode]
     print(f"Starting ActBots ({mode_name} Mode)")
     print("=" * 50)
 
     if args.mode == "cli":
         print("Type your goal below, or 'quit' to exit.")
+    elif args.mode == "discord":
+        print("Starting Discord bot...")
     print("-" * 50)
 
     provider = get_config_value("llm", "provider", default="openai")
@@ -97,6 +144,24 @@ def main():
         print("ERROR: LLM provider is Anthropic but ANTHROPIC_API_KEY is not set in .env.")
         sys.exit(1)
 
+    # Discord mode validation
+    if args.mode == "discord":
+        if not DISCORD_AVAILABLE:
+            print("ERROR: Discord mode requires 'discord.py' package.")
+            print("Install it with: pip install discord.py")
+            sys.exit(1)
+        
+        discord_token = os.getenv("DISCORD_BOT_TOKEN") or get_config_value("discord", "token")
+        discord_user_id = get_config_value("discord", "target_user_id")
+        
+        if not discord_token:
+            print("ERROR: Discord mode requires DISCORD_BOT_TOKEN in .env or discord.token in config.json")
+            sys.exit(1)
+        
+        if not discord_user_id:
+            print("ERROR: Discord mode requires discord.target_user_id in config.json")
+            sys.exit(1)
+
     try:
         # 1. Initialise the JenticClient
         jentic_client = JenticClient()
@@ -105,17 +170,67 @@ def main():
         llm_wrapper = LiteLLMChatLLM(model=model_name)
         memory = ScratchPadMemory()
 
-        # 3. Initialize the Reasoner
-        reasoner = BulletPlanReasoner(
-            jentic=jentic_client,
-            memory=memory,
-            llm=llm_wrapper,
-        )
-
-        # 4. Initialize Agent based on mode
+        # 3. Initialize Agent and Reasoner based on mode
         if args.mode == "cli":
             # CLI mode: Use controller pattern (preferred)
             controller = CLIController()
+            
+            # Initialize reasoner with CLI intervention hub
+            reasoner = FreeformReasoner(
+                jentic=jentic_client,
+                memory=memory,
+                llm=llm_wrapper,
+                intervention_hub=controller.intervention_hub,
+            )
+            
+            agent = InteractiveCLIAgent(
+                reasoner=reasoner,
+                memory=memory,
+                controller=controller,
+                jentic_client=jentic_client,
+            )
+
+        elif args.mode == "discord":
+            # Discord mode: Use Discord controller
+            # Get Discord configuration
+            discord_token = os.getenv("DISCORD_BOT_TOKEN") or get_config_value("discord", "token")
+            discord_user_id = get_config_value("discord", "target_user_id")
+            monitored_channels = get_config_value("discord", "monitored_channels", default=[])
+            default_channel_id = get_config_value("discord", "default_channel_id", default=None)
+            escalation_channel_id = get_config_value("discord", "escalation_channel_id", default=None)
+            command_prefix = get_config_value("discord", "command_prefix", default="!")
+            use_embeds = get_config_value("discord", "use_embeds", default=True)
+            auto_react = get_config_value("discord", "auto_react", default=True)
+            verbose = get_config_value("discord", "verbose", default=True)
+            escalation_timeout = get_config_value("discord", "escalation_timeout", default=300)
+            
+            # Create Discord bot
+            intents = discord.Intents.default()
+            intents.message_content = True
+            bot = discord.Client(intents=intents)
+            
+            # Create Discord controller
+            controller = DiscordController(
+                bot=bot,
+                target_user_id=discord_user_id,
+                monitored_channels=monitored_channels if monitored_channels else None,
+                default_channel_id=default_channel_id if default_channel_id else None,
+                escalation_channel_id=escalation_channel_id if escalation_channel_id else None,
+                command_prefix=command_prefix,
+                auto_react=auto_react,
+                use_embeds=use_embeds,
+                verbose=verbose,
+                escalation_timeout=escalation_timeout
+            )
+            
+            # Initialize reasoner with Discord intervention hub
+            reasoner = FreeformReasoner(
+                jentic=jentic_client,
+                memory=memory,
+                llm=llm_wrapper,
+                intervention_hub=controller.intervention_hub,
+            )
+            
             agent = InteractiveCLIAgent(
                 reasoner=reasoner,
                 memory=memory,
@@ -126,6 +241,14 @@ def main():
         else:  # ui mode
             # For UI mode, we still use individual components for now
             # (SimpleUIAgent might need its own controller in the future)
+            
+            # Initialize reasoner without intervention hub for UI mode
+            reasoner = FreeformReasoner(
+                jentic=jentic_client,
+                memory=memory,
+                llm=llm_wrapper,
+            )
+            
             inbox = CLIInbox(prompt="Enter your goal: ")
             agent = SimpleUIAgent(
                 reasoner=reasoner,
@@ -135,7 +258,28 @@ def main():
             )
 
         # 5. Run the Agent
-        agent.spin()
+        if args.mode == "discord":
+            # For Discord mode, we need to run the bot
+            @bot.event
+            async def on_ready():
+                print(f"Discord bot logged in as {bot.user}")
+                print(f"Monitoring user: {discord_user_id}")
+                if monitored_channels:
+                    print(f"Monitoring channels: {monitored_channels}")
+                else:
+                    print("Monitoring all channels")
+                
+                # Display welcome message if default channel is set
+                if default_channel_id:
+                    controller.display_welcome(default_channel_id)
+                
+                # Start the agent in the background
+                import asyncio
+                asyncio.create_task(agent.spin_async())
+            
+            bot.run(discord_token)
+        else:
+            agent.spin()
 
     except ImportError as e:
         print(f"ERROR: A required package is not installed. {e}")

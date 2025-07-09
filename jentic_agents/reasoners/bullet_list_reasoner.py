@@ -212,6 +212,27 @@ class BulletPlanReasoner(BaseReasoner):
             logger.error(f"Prompt file not found: {prompt_path}")
             raise RuntimeError(f"Prompt file not found: {prompt_path}")
 
+    def _safe_llm_call(self, messages, **kwargs) -> str:
+        """
+        Call LLM in async-safe way. If we're in an async context, run in thread pool
+        to avoid blocking the event loop. Otherwise use sync method.
+        """
+        try:
+            # Check if we're in an async context
+            import asyncio
+            loop = asyncio.get_running_loop()
+            if loop.is_running():
+                # We're in an async context, run in thread pool to avoid blocking
+                import concurrent.futures
+                with concurrent.futures.ThreadPoolExecutor() as executor:
+                    future = executor.submit(self.llm.chat, messages, **kwargs)
+                    return future.result()
+        except RuntimeError:
+            # No running event loop, use sync method
+            pass
+        
+        # Use sync method
+        return self.llm.chat(messages, **kwargs)
 
     def _build_search_query(self, step: "Step") -> str:
         """
@@ -229,7 +250,7 @@ class BulletPlanReasoner(BaseReasoner):
             # Add human guidance context if available
             context_aware_prompt = self._add_human_guidance_to_prompt(prompt)
 
-            reply = self.llm.chat([{"role": "user", "content": context_aware_prompt}]).strip()
+            reply = self._safe_llm_call([{"role": "user", "content": context_aware_prompt}]).strip()
             if reply:
                 logger.info("LLM keyword-extraction produced query: %s", reply)
                 return reply
@@ -285,7 +306,7 @@ class BulletPlanReasoner(BaseReasoner):
                 tool_candidates=candidate_block,
             )
 
-        raw_reply = self.llm.chat(messages=[{"role": "user", "content": prompt}]).strip()
+        raw_reply = self._safe_llm_call(messages=[{"role": "user", "content": prompt}]).strip()
         logger.debug("LLM tool-selection reply: %s", raw_reply)
 
         # 1️⃣ Numeric selection
@@ -336,6 +357,7 @@ class BulletPlanReasoner(BaseReasoner):
         self.max_iters = max_iters
         self.search_top_k = search_top_k
         self.escalation = intervention_hub or NoEscalation()
+        self._last_escalation_question: Optional[str] = None  # Track last question asked to human
         logger.info("BulletPlanReasoner initialization complete")
 
     # ------------------------------------------------------------------
@@ -359,6 +381,9 @@ class BulletPlanReasoner(BaseReasoner):
             reason = match.group(1).strip()
             question = match.group(2).strip()
             logger.info(f"🤖➡️👤 LLM requested escalation: {reason}")
+            
+            # Store the question for later reference
+            self._last_escalation_question = question
             
             if self.escalation.is_available():
                 try:
@@ -441,7 +466,7 @@ class BulletPlanReasoner(BaseReasoner):
             logger.debug(f"Planning prompt:\n{prompt}")
             messages = [{"role": "user", "content": prompt}]
             logger.info("Calling LLM for plan generation")
-            response = self.llm.chat(messages=messages)
+            response = self._safe_llm_call(messages=messages)
             logger.info(f"LLM planning response:\n{response}")
             # The plan is inside a markdown code fence.
             plan_md = self._extract_fenced_code(response)
@@ -525,7 +550,7 @@ class BulletPlanReasoner(BaseReasoner):
         try:
             # Add human guidance context if available
             context_aware_prompt = self._add_human_guidance_to_prompt(prompt)
-            response = self.llm.chat(messages=[{"role": "user", "content": context_aware_prompt}])
+            response = self._safe_llm_call(messages=[{"role": "user", "content": context_aware_prompt}])
             raw_reply = response.strip()
             num_match = re.search(r"(\d+)", raw_reply)
             if num_match:
@@ -606,7 +631,7 @@ class BulletPlanReasoner(BaseReasoner):
         context_aware_prompt = self._add_human_guidance_to_prompt(prompt)
         messages = [{"role": "user", "content": context_aware_prompt}]
         logger.info("Calling LLM for parameter generation")
-        args_json = self.llm.chat(messages=messages)
+        args_json = self._safe_llm_call(messages)
         logger.info(f"LLM parameter response:\n{args_json}")
         
         try:
@@ -629,7 +654,7 @@ class BulletPlanReasoner(BaseReasoner):
             # Add human guidance context for the re-prompt too
             context_aware_explicit_prompt = self._add_human_guidance_to_prompt(explicit_prompt)
             messages = [{"role": "user", "content": context_aware_explicit_prompt}]
-            args_json = self.llm.chat(messages=messages)
+            args_json = self._safe_llm_call(messages=messages)
             logger.info(f"LLM parameter response (re-prompt):\n{args_json}")
             try:
                 args: Dict[str, Any] = self._safe_json_loads(args_json)
@@ -790,7 +815,7 @@ class BulletPlanReasoner(BaseReasoner):
         logger.info("Calling LLM for reflection")
         # Add human guidance context if available
         context_aware_prompt = self._add_human_guidance_to_prompt(prompt)
-        revised_step = self.llm.chat(messages=[{"role": "user", "content": context_aware_prompt}]).strip()
+        revised_step = self._safe_llm_call(messages=[{"role": "user", "content": context_aware_prompt}]).strip()
 
         # Process for escalation during reflection
         context = f"Step: {current_step.text}\nPhase: Reflection\nError: {err_msg}\nGoal: {state.goal}"
@@ -799,12 +824,13 @@ class BulletPlanReasoner(BaseReasoner):
         if processed_step != revised_step:
             # Human provided guidance during reflection
             logger.info("Reflection escalated to human, using human guidance")
-            # Instead of replacing step text, revise it to incorporate human guidance
-            if current_step.text.lower().startswith("execute") or "channel" in current_step.text.lower():
-                # For execution steps, try to integrate the human response contextually
-                current_step.text = f"Execute Discord operation with channel_id: {processed_step}"
+            # Always preserve original step context and incorporate human guidance
+            original_step = current_step.text
+            if self._last_escalation_question:
+                current_step.text = f"{original_step} (human answered '{self._last_escalation_question}' with: {processed_step})"
+                self._last_escalation_question = None  # Clear after use
             else:
-                current_step.text = processed_step
+                current_step.text = f"{original_step} (using human guidance: {processed_step})"
             current_step.status = "pending"
             current_step.tool_id = None
             return True
@@ -906,7 +932,7 @@ class BulletPlanReasoner(BaseReasoner):
         try:
             # Add human guidance context if available
             context_aware_reasoning_prompt = self._add_human_guidance_to_prompt(reasoning_prompt)
-            reply = self.llm.chat(messages=[{"role": "user", "content": context_aware_reasoning_prompt}]).strip()
+            reply = self._safe_llm_call(messages=[{"role": "user", "content": context_aware_reasoning_prompt}]).strip()
             logger.debug("Reasoning LLM reply: %s", reply)
 
             # Process for escalation
@@ -1134,7 +1160,7 @@ Respond with:
 Your choice:"""
 
         try:
-            response = self.llm.chat(messages=[{"role": "user", "content": escalation_check_prompt}]).strip()
+            response = self._safe_llm_call(messages=[{"role": "user", "content": escalation_check_prompt}]).strip()
             logger.info(f"Proactive escalation check response: {response}")
             
             # Process escalation request
