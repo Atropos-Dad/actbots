@@ -217,7 +217,7 @@ class ReWOOReasoner(BaseReWOOReasoner):
 
     def _select_tool(self, step: Step) -> str:
         """Search for tools and ask the LLM to pick the best one for *step*."""
-        tools = self._search_tools(step)
+        tools = self.tool.search(step.text, top_k=20)
         self._logger.info(
             "phase=SELECT_SEARCH run_id=%s step_text=%s hits=%s",
             getattr(self, "_run_id", "NA"),
@@ -256,23 +256,8 @@ class ReWOOReasoner(BaseReWOOReasoner):
 
         raise ValueError(f"Could not obtain valid tool id for step '{step.text}'. Last reply: {reply}")
 
-    def _search_tools(self, step: Step, top_k: int = 20) -> List[Tool]:
-        """Return *top_k* potential tools for *step* using the tool interface."""
-        hits = self.tool.search(step.text, top_k=top_k)
-        tools: List[Tool] = []
-        for hit in hits:
-            tools.append(
-                Tool(
-                    id=hit["id"],
-                    name=hit.get("name", "unknown"),
-                    description=hit.get("description", ""),
-                    api_name=hit.get("api_name", "unknown"),
-                    parameters={},
-                )
-            )
-        return tools
 
-    def _get_tool(self, tool_id: str) -> Dict[str, Any]:
+    def _get_tool(self, tool_id: str) -> Tool:
         """Load and cache full tool execution info via the tool interface."""
         if tool_id in self._tool_cache:
             return self._tool_cache[tool_id]
@@ -283,7 +268,7 @@ class ReWOOReasoner(BaseReWOOReasoner):
             return tool_execution_info
         except Exception as exc:  # noqa: BLE001
             self._logger.warning("Could not load tool execution info Tool: %s Error: %s", tool_id, exc)
-            return {}
+            return None
 
     def _generate_params(
         self,
@@ -299,10 +284,11 @@ class ReWOOReasoner(BaseReWOOReasoner):
         if forced:
             return forced
 
-        allowed_keys = ",".join(tool_execution_info.get("parameters", {}).keys())
+        tool_params = tool_execution_info.parameters or {}
+        allowed_keys = ",".join(tool_params.keys())
         prompt = prompts.PARAMETER_GENERATION_PROMPT.format(
             step=step.text,
-            tool_schema=json.dumps(tool_execution_info.get("parameters", {}), ensure_ascii=False),
+            tool_schema=json.dumps(tool_params, ensure_ascii=False),
             step_inputs=json.dumps(inputs, ensure_ascii=False),
             allowed_keys=allowed_keys,
         )
@@ -310,7 +296,7 @@ class ReWOOReasoner(BaseReWOOReasoner):
         params = self._parse_json_or_retry(raw, prompt)
 
         # Keep only parameters that the tool schema recognises to avoid 400s.
-        params = {k: v for k, v in params.items() if k in tool_execution_info.get("parameters", {})}
+        params = {k: v for k, v in params.items() if k in tool_params}
         return params
 
     def _parse_json_or_retry(self, raw: str, original_prompt: str) -> Dict[str, Any]:
