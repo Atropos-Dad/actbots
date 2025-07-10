@@ -4,7 +4,6 @@ Tests for communication controllers.
 
 import pytest
 from unittest.mock import Mock, patch
-from jentic_agents.communication.controllers.base_controller import BaseController
 from jentic_agents.communication.controllers.cli_controller import CLIController
 from jentic_agents.communication.controllers.discord_controller import DiscordController
 from jentic_agents.communication.inbox.cli_inbox import CLIInbox

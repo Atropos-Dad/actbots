@@ -4,8 +4,6 @@ Tests for communication outboxes.
 
 import pytest
 from unittest.mock import Mock, patch, AsyncMock
-import discord
-import asyncio
 
 from jentic_agents.communication.outbox.cli_outbox import CLIOutbox
 from jentic_agents.communication.outbox.discord_outbox import DiscordOutbox

@@ -38,7 +38,6 @@ class StandardReasoner(BaseReasoner):
             model: OpenAI model to use for reasoning
             max_tool_calls_per_iteration: Max tool calls per reasoning iteration
         """
-        from ..platform.jentic_client import JenticClient
 
         self.jentic_client = jentic_client
         self.memory = memory
