@@ -9,6 +9,7 @@ import json
 from ..platform.jentic_client import JenticClient
 from .base_reasoner import BaseReasoner, ReasoningResult
 from ..utils.llm import BaseLLM, LiteLLMChatLLM
+from ..memory.base_memory import BaseMemory
 
 logger = logging.getLogger(__name__)
 
@@ -23,6 +24,7 @@ class StandardReasoner(BaseReasoner):
     def __init__(
         self,
         jentic_client: JenticClient,
+        memory: BaseMemory,
         llm: Optional[BaseLLM] = None,
         model: str = "gpt-4",
         max_tool_calls_per_iteration: int = 3,
@@ -32,11 +34,13 @@ class StandardReasoner(BaseReasoner):
 
         Args:
             jentic_client: Client for Jentic platform operations
+            memory: Memory system for the agent
             llm: LLM client for LLM calls (if None, creates default)
             model: OpenAI model to use for reasoning
             max_tool_calls_per_iteration: Max tool calls per reasoning iteration
         """
         self.jentic_client = jentic_client
+        self.memory = memory
         self.llm = llm or LiteLLMChatLLM(model=model)
         self.model = model
         self.max_tool_calls_per_iteration = max_tool_calls_per_iteration

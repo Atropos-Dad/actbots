@@ -7,6 +7,7 @@ from unittest.mock import Mock, patch
 from ..reasoners.standard_reasoner import StandardReasoner
 from ..platform.jentic_client import JenticClient
 from ..utils.llm import BaseLLM
+from ..memory.scratch_pad import ScratchPadMemory
 
 
 class TestStandardReasoner:
@@ -16,6 +17,7 @@ class TestStandardReasoner:
         """Set up test fixtures"""
         self.jentic_client = Mock(spec=JenticClient)
         self.llm = Mock(spec=BaseLLM)
+        self.memory = Mock(spec=ScratchPadMemory)
 
         # Mock LLM response
         self.llm.chat.return_value = "Test response"
@@ -23,6 +25,7 @@ class TestStandardReasoner:
         self.reasoner = StandardReasoner(
             jentic_client=self.jentic_client,
             llm=self.llm,
+            memory=self.memory,
             model="gpt-3.5-turbo",  # Use cheaper model for tests
         )
 
@@ -30,12 +33,14 @@ class TestStandardReasoner:
         """Test reasoner initialization"""
         assert self.reasoner.jentic_client == self.jentic_client
         assert self.reasoner.llm == self.llm
+        assert self.reasoner.memory == self.memory
         assert self.reasoner.model == "gpt-3.5-turbo"
 
     @patch("jentic_agents.reasoners.standard_reasoner.LiteLLMChatLLM")
     def test_init_default_llm(self, mock_llm):
         """Test reasoner initialization with default LLM client"""
-        StandardReasoner(jentic_client=self.jentic_client)
+        memory = Mock(spec=ScratchPadMemory)
+        StandardReasoner(jentic_client=self.jentic_client, memory=memory)
         mock_llm.assert_called_once()
 
     def test_plan(self):
