@@ -10,6 +10,7 @@ import re
 import logging
 import json
 from textwrap import dedent
+import os
 
 from ..platform.jentic_client import JenticClient
 from ..memory.base_memory import BaseMemory
@@ -83,6 +84,9 @@ class BaseReasoner(ABC):
         self._last_escalation_question: Optional[str] = None
         
         logger.info(f"Initialized {self.__class__.__name__} with max_iterations={max_iterations}")
+        
+        # Cache for loaded prompts
+        self._prompt_cache = {}
 
     @abstractmethod
     def run(self, goal: str, max_iterations: int = 10) -> ReasoningResult:
@@ -341,6 +345,25 @@ class BaseReasoner(ABC):
         self.tool_calls.clear()
         self.iteration_count = 0
         logger.debug("Reasoner state reset")
+        
+    def load_prompt(self, prompt_name: str) -> str:
+        """Load prompt template from prompts directory with caching."""
+        if prompt_name in self._prompt_cache:
+            return self._prompt_cache[prompt_name]
+            
+        # Get the path to the system_prompts directory
+        current_dir = os.path.dirname(os.path.abspath(__file__))
+        prompts_dir = os.path.join(os.path.dirname(current_dir), "prompts", "system_prompts")
+        prompt_file = os.path.join(prompts_dir, f"{prompt_name}.txt")
+        
+        try:
+            with open(prompt_file, 'r', encoding='utf-8') as f:
+                prompt_template = f.read().strip()
+            self._prompt_cache[prompt_name] = prompt_template
+            return prompt_template
+        except FileNotFoundError as e:
+            logger.error(f"Failed to load prompt '{prompt_name}': {e}")
+            raise RuntimeError(f"Could not load prompt file: {prompt_name}.txt")
 
     # ========================================================================
     # NEW SHARED HIGH-LEVEL HELPERS (deduplicated from concrete reasoners)
@@ -355,22 +378,14 @@ class BaseReasoner(ABC):
         parameters_block = json.dumps(tool.get("parameters", {}), indent=2, ensure_ascii=False)
         tool_name = tool.get("name", tool.get("id", "unknown tool"))
         tool_desc = tool.get("description", "")
-        return dedent(
-            f"""
-            You are an action-parameter generator. Given a tool specification and the current plan step,
-            produce a single JSON object containing arguments for the tool call – **no extra keys**.
-
-            Tool: {tool_name}
-            Description: {tool_desc}
-            Parameter schema (for reference):
-            {parameters_block}
-
-            Current plan step / context:
-            {plan_context}
-
-            Respond **only** with a JSON object.
-            """
-        ).strip()
+        
+        prompt_template = self.load_prompt("tool_parameter_generation")
+        return prompt_template.format(
+            tool_name=tool_name,
+            tool_desc=tool_desc,
+            parameters_block=parameters_block,
+            plan_context=plan_context
+        )
 
     def generate_and_validate_parameters(
         self,
@@ -447,18 +462,11 @@ class BaseReasoner(ABC):
             [f"- {tool['id']}: {tool.get('name', '')} - {tool.get('description', '')}" for tool in available_tools]
         )
 
-        prompt = dedent(
-            f"""
-            You are a tool-selection assistant. Given a plan step and a list of available tools, choose the most appropriate tool **ID**.
-            Reply with one of the IDs exactly, or the word NONE if no tool fits.
-
-            Plan step:
-            {plan_description}
-
-            Available tools:
-            {tool_descriptions}
-            """
-        ).strip()
+        prompt_template = self.load_prompt("tool_selection_llm")
+        prompt = prompt_template.format(
+            plan_description=plan_description,
+            tool_descriptions=tool_descriptions
+        )
 
         response = self.safe_llm_call([
             {"role": "user", "content": prompt}
@@ -479,19 +487,12 @@ class BaseReasoner(ABC):
     # ---- FINAL ANSWER SYNTHESIS ---------------------------------------------
     def generate_final_answer(self, goal: str, observations: List[str]) -> str:
         """Utility to turn a list of observations into a concise final answer."""
-        prompt = dedent(
-            f"""
-            You are a summarisation assistant. Given the original goal and a list of observations / results, craft a clear, concise final answer.
-
-            Goal:
-            {goal}
-
-            Observations:
-            {'\n'.join('- ' + o for o in observations)}
-
-            Provide the final answer only, no extra commentary.
-            """
-        ).strip()
+        observations_text = '\n'.join('- ' + o for o in observations)
+        prompt_template = self.load_prompt("final_answer_synthesis")
+        prompt = prompt_template.format(
+            goal=goal,
+            observations=observations_text
+        )
         response = self.safe_llm_call([
             {"role": "user", "content": prompt}
         ], max_tokens=300, temperature=0.5)
@@ -503,19 +504,12 @@ class BaseReasoner(ABC):
         if not observations:
             return False
 
-        prompt = dedent(
-            f"""
-            You are an evaluation assistant. Decide whether the following goal has been fully achieved based on the observations.
-
-            Goal:
-            {goal}
-
-            Observations:
-            {'\n'.join('- ' + o for o in observations)}
-
-            Reply with YES if achieved, otherwise NO. No other words.
-            """
-        ).strip()
+        observations_text = '\n'.join('- ' + o for o in observations)
+        prompt_template = self.load_prompt("goal_evaluation")
+        prompt = prompt_template.format(
+            goal=goal,
+            observations=observations_text
+        )
 
         response = self.safe_llm_call([
             {"role": "user", "content": prompt}
@@ -525,22 +519,14 @@ class BaseReasoner(ABC):
 
     def llm_reflect(self, goal: str, observations: List[str], failed_attempts: List[str]) -> str:
         """Shared reflection prompt to suggest improvements after failures."""
-        prompt = dedent(
-            f"""
-            You are a reflection assistant. The goal has not been achieved yet. Analyse the situation and propose improved next steps.
-
-            Goal:
-            {goal}
-
-            Observations so far:
-            {'\n'.join('- ' + o for o in observations) if observations else '(none)'}
-
-            Failed attempts:
-            {'\n'.join('- ' + a for a in failed_attempts) if failed_attempts else '(none)'}
-
-            Provide insights or revised plan succinctly.
-            """
-        ).strip()
+        observations_text = '\n'.join('- ' + o for o in observations) if observations else '(none)'
+        failed_attempts_text = '\n'.join('- ' + a for a in failed_attempts) if failed_attempts else '(none)'
+        prompt_template = self.load_prompt("failure_reflection")
+        prompt = prompt_template.format(
+            goal=goal,
+            observations=observations_text,
+            failed_attempts=failed_attempts_text
+        )
 
         response = self.safe_llm_call([
             {"role": "user", "content": prompt}
