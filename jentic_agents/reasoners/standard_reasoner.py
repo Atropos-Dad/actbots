@@ -6,14 +6,13 @@ import logging
 from typing import Any, Dict, List, Optional
 import json
 
-from ..platform.jentic_client import JenticClient
-from .base_reasoner import BaseReasoner, ReasoningResult
-from ..utils.llm import BaseLLM, LiteLLMChatLLM
+from .core.abstract_reasoner import ReasonerInfrastructure
+from .base_reasoner import ReasoningResult
 
 logger = logging.getLogger(__name__)
 
 
-class StandardReasoner(BaseReasoner):
+class StandardReasoner(ReasonerInfrastructure):
     """
     Concrete implementation of ReAct reasoning loop with Jentic SDK integration.
 
@@ -22,23 +21,25 @@ class StandardReasoner(BaseReasoner):
 
     def __init__(
         self,
-        jentic_client: JenticClient,
-        llm: Optional[BaseLLM] = None,
-        model: str = "gpt-4",
-        max_tool_calls_per_iteration: int = 3,
+        jentic_client,
+        memory,
+        llm=None,
+        model="gpt-4",
+        max_tool_calls_per_iteration=3,
+        **kwargs
     ):
         """
         Initialize the standard reasoner.
 
         Args:
             jentic_client: Client for Jentic platform operations
+            memory: Memory system for state persistence
             llm: LLM client for LLM calls (if None, creates default)
             model: OpenAI model to use for reasoning
             max_tool_calls_per_iteration: Max tool calls per reasoning iteration
+            **kwargs: Additional arguments passed to base class
         """
-        self.jentic_client = jentic_client
-        self.llm = llm or LiteLLMChatLLM(model=model)
-        self.model = model
+        super().__init__(jentic_client, memory, llm, model, **kwargs)
         self.max_tool_calls_per_iteration = max_tool_calls_per_iteration
 
     def run(self, goal: str, max_iterations: int = 10) -> ReasoningResult:
@@ -50,18 +51,23 @@ class StandardReasoner(BaseReasoner):
         )
 
         observations: List[str] = []
-        tool_calls: List[Dict[str, Any]] = []
         failed_attempts: List[str] = []
+        
+        # Reset state for fresh run
+        self.reset_state()
 
         for iteration in range(max_iterations):
             logger.info(f"Iteration {iteration + 1}/{max_iterations}")
 
             try:
+                # Increment iteration counter
+                self.increment_iteration()
+                
                 context = {
-                    "iteration": iteration + 1,
+                    "iteration": self.iteration_count,
                     "observations": observations,
                     "failed_attempts": failed_attempts,
-                    "tool_calls": tool_calls,
+                    "tool_calls": self.tool_calls,
                 }
 
                 # Plan
@@ -71,12 +77,7 @@ class StandardReasoner(BaseReasoner):
                 # Check if we can already answer (only if we have observations)
                 if observations and self.evaluate(goal, observations):
                     final_answer = self._generate_final_answer(goal, observations)
-                    return ReasoningResult(
-                        final_answer=final_answer,
-                        iterations=iteration + 1,
-                        tool_calls=tool_calls,
-                        success=True,
-                    )
+                    return self.create_reasoning_result(final_answer, True)
 
                 # Search for tools
                 available_tools = self.jentic_client.search(plan, top_k=5)
@@ -92,12 +93,7 @@ class StandardReasoner(BaseReasoner):
                     # No tool needed, try to generate answer
                     if observations:
                         final_answer = self._generate_final_answer(goal, observations)
-                        return ReasoningResult(
-                            final_answer=final_answer,
-                            iterations=iteration + 1,
-                            tool_calls=tool_calls,
-                            success=True,
-                        )
+                        return self.create_reasoning_result(final_answer, True)
                     else:
                         failed_attempts.append(
                             f"No suitable tool found for plan: {plan}"
@@ -110,18 +106,9 @@ class StandardReasoner(BaseReasoner):
                 # Act
                 action_params = self.act(tool_details, plan)
 
-                # Execute tool
-                execution_result = self.jentic_client.execute(
+                # Execute tool using base class method
+                execution_result = self.execute_tool_safely(
                     selected_tool["id"], action_params
-                )
-
-                tool_calls.append(
-                    {
-                        "tool_id": selected_tool["id"],
-                        "tool_name": selected_tool["name"],
-                        "params": action_params,
-                        "result": execution_result,
-                    }
                 )
 
                 # Observe
@@ -143,18 +130,10 @@ class StandardReasoner(BaseReasoner):
         # Max iterations reached
         if observations:
             final_answer = self._generate_final_answer(goal, observations)
-            success = True
+            return self.create_reasoning_result(final_answer, True)
         else:
             final_answer = "I was unable to find a solution within the iteration limit."
-            success = False
-
-        return ReasoningResult(
-            final_answer=final_answer,
-            iterations=max_iterations,
-            tool_calls=tool_calls,
-            success=success,
-            error_message="Max iterations reached" if not success else None,
-        )
+            return self.create_reasoning_result(final_answer, False, "Max iterations reached")
 
     def plan(self, goal: str, context: Dict[str, Any]) -> str:
         """Generate a plan for achieving the goal."""
@@ -177,7 +156,7 @@ What should be the next step in the plan to achieve this goal?""",
             },
         ]
 
-        response = self.llm.chat(messages=messages, max_tokens=200, temperature=0.7)
+        response = self.safe_llm_call(messages=messages, max_tokens=200, temperature=0.7)
 
         return response.strip()
 
@@ -216,7 +195,7 @@ Respond with just the tool ID or 'NONE'.""",
             },
         ]
 
-        response = self.llm.chat(
+        response = self.safe_llm_call(
             messages=messages, max_tokens=50, temperature=0.0  # deterministic selection
         )
 
@@ -271,7 +250,7 @@ Generate parameters for this tool as a JSON object.""",
             },
         ]
 
-        response = self.llm.chat(messages=messages, max_tokens=200, temperature=0.3)
+        response = self.safe_llm_call(messages=messages, max_tokens=200, temperature=0.3)
 
         try:
             params = json.loads(response.strip())
@@ -309,7 +288,7 @@ Has the goal been achieved? Respond with YES or NO only.""",
             },
         ]
 
-        response = self.llm.chat(messages=messages, max_tokens=10, temperature=0.1)
+        response = self.safe_llm_call(messages=messages, max_tokens=10, temperature=0.1)
 
         return response.strip().upper() == "YES"
 
@@ -337,7 +316,7 @@ What insights can help improve the approach?""",
             },
         ]
 
-        response = self.llm.chat(messages=messages, max_tokens=200, temperature=0.7)
+        response = self.safe_llm_call(messages=messages, max_tokens=200, temperature=0.7)
 
         return response.strip()
 
@@ -360,6 +339,6 @@ Provide a final answer to the goal based on these observations.""",
             },
         ]
 
-        response = self.llm.chat(messages=messages, max_tokens=300, temperature=0.5)
+        response = self.safe_llm_call(messages=messages, max_tokens=300, temperature=0.5)
 
         return response.strip()

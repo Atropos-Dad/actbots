@@ -9,14 +9,14 @@ defaults, so reasoners can override only what's relevant to their strategy.
 from abc import abstractmethod
 from typing import Any, Dict, List, Optional
 
-from ..core.abstract_reasoner import AbstractReasoner
+from ..core.abstract_reasoner import ReasonerInfrastructure
 from ..base_reasoner import ReasoningResult
 from ...utils.logger import get_logger
 
 logger = get_logger(__name__)
 
 
-class ReactInterface(AbstractReasoner):
+class ReactInterface(ReasonerInfrastructure):
     """
     Optional interface for reasoners that follow the ReAct pattern.
     

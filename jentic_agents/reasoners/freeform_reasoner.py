@@ -18,15 +18,10 @@ import re
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional
 
-from .base_reasoner import BaseReasoner, ReasoningResult
-from ..platform.jentic_client import JenticClient
-from ..utils.llm import BaseLLM, LiteLLMChatLLM
-from ..memory.scratch_pad import ScratchPadMemory
+from .core.abstract_reasoner import ReasonerInfrastructure
+from .base_reasoner import ReasoningResult
 from ..utils.logger import get_logger
-from ..communication.hitl.base_intervention_hub import BaseInterventionHub, NoEscalation
-from ..utils.config import get_config
 
-config = get_config()
 logger = get_logger(__name__)
 
 # Safety limits
@@ -48,41 +43,45 @@ class ConversationState:
     error_message: Optional[str] = None
 
 
-class FreeformReasoner(BaseReasoner):
+class FreeformReasoner(ReasonerInfrastructure):
     """A minimal reasoner that lets the LLM drive the entire process."""
 
     def __init__(
         self,
-        jentic: JenticClient,
-        memory: ScratchPadMemory,
-        llm: Optional[BaseLLM] = None,
-        model: Optional[str] = None,
-        max_iterations: int = MAX_ITERATIONS,
-        include_tool_catalogue: bool = True,
-        intervention_hub: Optional[BaseInterventionHub] = None,
-    ) -> None:
+        jentic_client,
+        memory,
+        llm=None,
+        model=None,
+        max_iterations=MAX_ITERATIONS,
+        include_tool_catalogue=True,
+        intervention_hub=None,
+        **kwargs
+    ):
         """Initialize the freeform reasoner.
 
         Args:
-            jentic: Client for tool search and execution
+            jentic_client: Client for tool search and execution
             memory: Memory system for state persistence
             llm: Language model interface
             model: Model name if no LLM provided
             max_iterations: Safety limit on conversation turns
             include_tool_catalogue: Whether to provide full tool list upfront
             intervention_hub: Human intervention hub for escalations
+            **kwargs: Additional arguments passed to base class
         """
-        super().__init__()
-        llm_model = model or config.get("llm", {}).get("model", "gpt-4o")
-        self.jentic = jentic
-        self.memory = memory
-        self.llm = llm or LiteLLMChatLLM(model=llm_model)
-        self.max_iterations = max_iterations
+        super().__init__(
+            jentic_client=jentic_client,
+            memory=memory,
+            llm=llm,
+            model=model,
+            max_iterations=max_iterations,
+            intervention_hub=intervention_hub,
+            **kwargs
+        )
         self.include_tool_catalogue = include_tool_catalogue
-        self.intervention_hub = intervention_hub or NoEscalation()
 
         logger.info(
-            f"Initialized FreeformReasoner with model={llm_model}, max_iterations={max_iterations}"
+            f"Initialized FreeformReasoner with max_iterations={max_iterations}"
         )
 
     def run(self, goal: str, max_iterations: Optional[int] = None) -> ReasoningResult:
@@ -92,6 +91,9 @@ class FreeformReasoner(BaseReasoner):
 
         max_iters = max_iterations or self.max_iterations
         state = ConversationState(goal=goal)
+        
+        # Reset base class state for fresh run
+        self.reset_state()
 
         # Initialize conversation with system prompt and goal
         self._initialize_conversation(state)
@@ -222,7 +224,7 @@ IMPORTANT:
                 logger.warning("Goal is empty, skipping tool catalogue search.")
                 return "No tools available. Use tool search to find tools."
 
-            tools = self.jentic.search(goal, top_k=10)
+            tools = self.jentic_client.search(goal, top_k=10)
 
             if not tools:
                 return "No tools found for your goal. Use tool search to find other tools."
@@ -524,7 +526,7 @@ IMPORTANT:
 
         try:
             # Search for tools using the provided query
-            tools = self.jentic.search(query, top_k=top_k)
+            tools = self.jentic_client.search(query, top_k=top_k)
 
             if not tools:
                 return {
@@ -595,17 +597,8 @@ IMPORTANT:
             # Resolve memory placeholders in arguments
             resolved_args = self.memory.resolve_placeholders(args)
 
-            # Execute the tool
-            result = self.jentic.execute(tool_id, resolved_args)
-
-            # Record the tool call
-            call_record = {
-                "tool_id": tool_id,
-                "args": resolved_args,
-                "result": result,
-                "iteration": state.iteration_count,
-            }
-            state.tool_calls.append(call_record)
+            # Execute the tool using base class method
+            result = self.execute_tool_safely(tool_id, resolved_args)
 
             return {"tool_id": tool_id, "result": result, "success": True}
 
@@ -672,10 +665,12 @@ IMPORTANT:
             final_answer = "Task incomplete - reached iteration limit."
             error_message = f"Reached maximum iterations ({max_iters})"
 
-        result = ReasoningResult(
+        # Sync state for result creation
+        self.iteration_count = state.iteration_count
+        self.tool_calls = state.tool_calls
+        
+        result = self.create_reasoning_result(
             final_answer=final_answer,
-            iterations=state.iteration_count,
-            tool_calls=state.tool_calls,
             success=success,
             error_message=error_message,
         )
