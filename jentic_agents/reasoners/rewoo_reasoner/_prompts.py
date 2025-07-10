@@ -101,23 +101,71 @@ PARAMETER_GENERATION_PROMPT = ("""
     """
 )
 
-REFLECTION_PROMPT: str = (
-    """You are a self-healing reasoning engine. A step failed. Analyse the error and propose ONE fix.
+BASE_REFLECTION_PROMPT: str = (
+    """You are a self-healing reasoning engine. A step in a plan failed. Your task is to analyze the error and propose a single, precise fix.
 
-Return a JSON object with exactly these keys:
-  action: one of "retry_params", "change_tool", "rephrase_step", "give_up"
-  tool_id: (required if action==change_tool) valid tool id
-  params: (required if action in [retry_params, change_tool]) JSON object of parameters
-  step:   (required if action==rephrase_step) new step text
+**1. Analysis**
+First, provide a brief, one-sentence `reasoning` of the root cause. Analyze the goal, the failed step, the error, and the tool's schema.
 
-If action==give_up, omit the other keys.
+**2. Action**
+Based on your reasoning, propose ONE action.
 
-Context for you:
-Goal: {goal}
-Failed Step: {step}
-ErrorType: {error_type}
-ErrorMessage: {error_message}
-ToolSchema: {tool_schema}
+**Output Format**
+Return a single JSON object with the following structure.
+
+```json
+{
+  "reasoning": "A brief explanation of why the step failed.",
+  "action": "one of 'retry_params', 'change_tool', 'rephrase_step', or 'give_up'",
+  "tool_id": "(Required if action is 'change_tool') The ID of the new tool to use.",
+  "params": "(Required if action is 'retry_params' or 'change_tool') A valid JSON object of parameters for the tool.",
+  "step": "(Required if action is 'rephrase_step') The new, improved text for the step."
+}
+```
+
+**Example**
+*   **Context:**
+    *   Goal: "Send a welcome message to the #general channel"
+    *   Failed Step: "post message to channel"
+    *   Error: `Missing required parameter 'channel_id'`
+    *   Tool Schema: `{\"channel_id\": {\"type\": \"string\"}, \"content\": {\"type\": \"string\"}}`
+*   **Your Response:**
+```json
+{
+  "reasoning": "The error indicates a required parameter 'channel_id' was missing, which can be extracted from the goal.",
+  "action": "retry_params",
+  "params": {
+    "channel_id": "#general",
+    "content": "Welcome!"
+  }
+}
+```
+
+---
+**Your Turn: Real Context**
+
+**Goal:**
+{goal}
+
+**Failed Step:**
+{step}
+
+**Failed Tool:**
+{failed_tool_name}
+
+**Error:**
+{error_type}: {error_message}
+
+**Tool Schema (if available):**
+{tool_schema}
+"""
+)
+
+ALTERNATIVE_TOOLS_SECTION: str = (
+    """
+
+**Alternative Tools You Can Switch To (JSON):**
+{alternative_tools}
 """
 )
 

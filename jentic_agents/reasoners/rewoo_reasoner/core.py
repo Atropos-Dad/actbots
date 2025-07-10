@@ -69,7 +69,8 @@ class ReWOOReasoner(BaseReWOOReasoner):
                 tool_id,
                 exc,
             )
-            raise ToolExecutionError(str(exc)) from exc
+            self._reflect_on_failure(ToolExecutionError(str(exc)), step, state, failed_tool_id=tool_id)
+            return None
 
         step.status = "done"
         step.result = result["result"].output
@@ -82,6 +83,7 @@ class ReWOOReasoner(BaseReWOOReasoner):
         error: Exception,
         step: Step,
         state: ReasonerState,
+        failed_tool_id: str = None,
     ) -> None:  # noqa: D401
         """Invoke reflection logic and possibly modify the plan."""
         step.status = "failed"
@@ -92,20 +94,43 @@ class ReWOOReasoner(BaseReWOOReasoner):
             return
 
         tool_schema = {}
-        try:
-            tool_execution_info = self._get_tool(self._select_tool(step))
-            tool_schema = tool_execution_info["parameters"]
-        except Exception:
-            pass
+        failed_tool_name = failed_tool_id or "unknown"
+
+        # If we know which tool failed, get its schema directly.
+        if failed_tool_id and failed_tool_id != "none":
+            tool_execution_info = self._get_tool(failed_tool_id)
+            if tool_execution_info:
+                tool_schema = tool_execution_info.parameters
+
 
         error_type = error.__class__.__name__
-        prompt = prompts.REFLECTION_PROMPT.format(
+        prompt = prompts.BASE_REFLECTION_PROMPT.format(
             goal=state.goal,
             step=step.text,
+            failed_tool_name=failed_tool_name,
             error_type=error_type,
             error_message=str(error),
-            tool_schema=json.dumps(tool_schema, ensure_ascii=False),
+            tool_schema=json.dumps(tool_schema),
         )
+
+        if isinstance(error, ToolExecutionError):
+            try:
+                alternative_tools = self.tool.search(step.text, top_k=15)
+                if alternative_tools:
+                    # Create a minimal representation of the tools for the prompt
+                    tools_for_prompt = [
+                        {"id": t.id, "name": t.name, "api_name": t.api_name, "description": t.description}
+                        for t in alternative_tools
+                    ]
+                    alternative_tools_json = json.dumps(tools_for_prompt, indent=2)
+                    prompt += prompts.ALTERNATIVE_TOOLS_SECTION.format(
+                        alternative_tools=alternative_tools_json
+                    )
+            except Exception as exc:
+                self._logger.info(
+                    "Could not search for alternative tools during reflection: %s", exc
+                )
+
         raw = self._call_llm(prompt).strip()
         decision = self._parse_json_or_retry(raw, prompt)
 
@@ -206,6 +231,15 @@ class ReWOOReasoner(BaseReWOOReasoner):
 
     def _select_tool(self, step: Step) -> str:
         """Search for tools and ask the LLM to pick the best one for *step*."""
+        # First, check if reflection has forced a tool choice
+        memory_key = f"forced_tool:{step.text}"
+
+        forced_tool_id = self._memory.retrieve(memory_key)
+        if forced_tool_id:
+            self._logger.info("Using forced tool from reflection: %s", forced_tool_id)
+            self._memory.delete(memory_key)  # Ensure this is a one-time override
+            return forced_tool_id
+
         tools = self.tool.search(step.text, top_k=20)
         self._logger.info(
             "phase=SELECT_SEARCH run_id=%s step_text=%s hits=%s",
