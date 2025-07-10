@@ -235,12 +235,7 @@ class BulletPlanReasoner(BaseReasoner):
         if not hits:
             return None
 
-        # Try shared helper first (simple numeric list)
-        auto_choice = self.choose_tool_with_llm(step.text, hits)
-        if auto_choice is not None:
-            return auto_choice["id"]
-
-        # Fallback to advanced heuristics below
+        # Use BulletPlan-specific LLM prompt for tool selection (advanced context)
 
         # Build numbered candidate list
         numbered_lines: List[str] = []
@@ -518,7 +513,7 @@ class BulletPlanReasoner(BaseReasoner):
             )
         
         logger.info(f"Available memory keys for parameter filling: {available_memory_keys}")
-        return self._add_human_guidance_to_prompt(prompt)
+        return self.add_human_guidance_to_prompt(prompt)
 
     def _validate_llm_params(
         self, args_json: str, required_fields: List[str]
