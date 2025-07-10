@@ -10,8 +10,8 @@ from jentic_agents.tools.models import Tool
 from jentic_agents.reasoners.rewoo_reasoner.exceptions import (
     MissingInputError,
     ReasoningStepError,
-    ToolExecutionError,
 )
+from jentic_agents.tools.exceptions import ToolExecutionError
 from jentic_agents.reasoners.rewoo_reasoner._parser import parse_bullet_plan
 from jentic_agents.reasoners.rewoo_reasoner_contract import BaseReWOOReasoner
 from jentic_agents.tools.interface import ToolInterface

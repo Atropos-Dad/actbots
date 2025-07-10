@@ -5,6 +5,8 @@ import logging
 import os
 from typing import Any, Dict, List, Optional
 
+from jentic_agents.tools.exceptions import ToolExecutionError
+
 # Standard module logger
 logger = logging.getLogger(__name__)
 
@@ -200,8 +202,19 @@ class JenticClient:
 
             result = self._sync(exec_coro)
 
+            # The result object from the SDK has a 'status' and 'outputs'.
+            # A failure in the underlying tool execution is not an exception, but a
+            # result with a non-success status.
+            if hasattr(result, "status") and result.status != "success":
+                error_payload = result.outputs if hasattr(result, "outputs") else str(result)
+                logger.warning(
+                    "Tool execution reported failure for tool '%s': %s", tool_id, error_payload
+                )
+                raise ToolExecutionError(f"Tool {tool_id} failed: {error_payload}")
+
             return {"status": "success", "result": result}
 
         except Exception as exc:
             logger.error("Jentic execution failed for tool '%s': %s", tool_id, exc)
-            raise
+            # Re-raise as a ToolExecutionError so the reasoner can reflect.
+            raise ToolExecutionError(str(exc)) from exc
