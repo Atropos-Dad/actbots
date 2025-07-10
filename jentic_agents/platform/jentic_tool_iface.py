@@ -1,4 +1,7 @@
 """Concrete implementation of the ToolInterface for the Jentic platform."""
+
+#TODO: Merge this with /actbots/jentic_agents/platform/jentic_client.py
+
 from __future__ import annotations
 
 from typing import Any, Dict, List
