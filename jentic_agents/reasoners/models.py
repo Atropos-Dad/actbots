@@ -14,7 +14,6 @@ from pydantic import BaseModel, Field
 
 __all__ = [
     "Step",
-    "Tool",
     "ReasonerState",
     "ReasoningResult",
 ]
@@ -59,17 +58,6 @@ class Step(BaseModel):
     error: Optional[str] = None
     reflection_attempts: int = 0
     retry_count: int = 0
-
-
-class Tool(BaseModel):
-    """Metadata for a single Jentic tool (workflow or operation)."""
-
-    id: str
-    name: str
-    description: str
-    api_name: str = "unknown"
-    parameters: dict[str, Any] = {}
-
 
 class ReasonerState(BaseModel):
     """Mutable state shared across reasoning iterations."""

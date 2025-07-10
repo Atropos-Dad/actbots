@@ -5,7 +5,8 @@ from typing import Any, Dict, List
 
 import jentic_agents.reasoners.rewoo_reasoner._prompts as prompts
 from jentic_agents.memory.base_memory import BaseMemory
-from jentic_agents.reasoners.models import ReasonerState, Step, Tool
+from jentic_agents.reasoners.models import ReasonerState, Step
+from jentic_agents.tools.models import Tool
 from jentic_agents.reasoners.rewoo_reasoner.exceptions import (
     MissingInputError,
     ReasoningStepError,
