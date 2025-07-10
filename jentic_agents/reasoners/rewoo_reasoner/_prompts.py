@@ -142,11 +142,25 @@ FINAL_ANSWER_SYNTHESIS_PROMPT: str = (
 
 REASONING_STEP_PROMPT: str = (
     """
-    You are performing an internal reasoning sub-task.
-    Task: {step_text}
-    Relevant data (JSON): {mem_snippet}
+    You are an expert data processor. Your task is to perform an internal reasoning step based on the provided data.
 
-    Think step-by-step and output ONLY the final result. If the result is structured, return valid JSON.
+    **Current Sub-Task:** {step_text}
+    **Available Data (JSON):**
+    ```json
+    {mem_snippet}
+    ```
+
+    **Instructions:**
+    1.  Carefully analyze the `Current Sub-Task` and the `Available Data`.
+    2.  Execute the task based *only* on the provided data.
+    3.  Produce a single, final output.
+
+    **Output Format Rules:**
+    -   If the result is structured (e.g., a list or object), you MUST return a single, valid JSON object. Do NOT use markdown code fences or add explanations.
+    -   If the result is a simple text answer (e.g., a summary or a single value), return only the raw text.
+    -   Do NOT add any commentary, introductory phrases, or conversational text.
+
+    **Final Answer:**
     """
 )
 
