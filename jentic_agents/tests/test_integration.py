@@ -1,113 +1,109 @@
+"""
+Integration tests for the InteractiveCLIAgent.
+"""
+
 import pytest
-from unittest.mock import MagicMock, patch
-import sys
-import os
-
+from unittest.mock import MagicMock
 from jentic_agents.agents.interactive_cli_agent import InteractiveCLIAgent
-from jentic_agents.memory.scratch_pad import ScratchPadMemory
-from jentic_agents.reasoners.standard_reasoner import StandardReasoner
-from jentic_agents.platform.jentic_client import JenticClient
-from jentic_agents.communication.controllers.cli_controller import CLIController
-from jentic_agents.tests.mocks.jentic_mock import JenticMock
-from jentic_agents.utils.llm import BaseLLM
 from jentic_agents.reasoners.base_reasoner import ReasoningResult
-
-# Fixture for a fully assembled agent 
+from jentic_agents.communication.controllers.cli_controller import CLIController
 
 @pytest.fixture
 def fully_integrated_agent(mocker):
     """
-    Sets up a complete InteractiveCLIAgent with all its components,
-    using a mock Jentic service for testing.
+    Sets up a complete InteractiveCLIAgent with a mocked controller
+    and its sub-components (inbox, outbox, hub).
+
+    This fixture mocks the dependencies of the agent to test its internal
+    logic without making external calls.
     """
-    # 1. Mock the Jentic SDK to use our mock service
-    mock_jentic_instance = JenticMock()
-    sys.modules["jentic"] = MagicMock(Jentic=lambda **kwargs: mock_jentic_instance)
-    class DummyModels:
-        class ApiCapabilitySearchRequest:
-            def __init__(self, capability_description, max_results):
-                self.capability_description = capability_description
-                self.max_results = max_results
-    sys.modules["jentic.models"] = DummyModels
-    os.environ["JENTIC_API_KEY"] = "mock_key"
-    
-    # 2. Initialize real components
-    client = JenticClient()
-    reasoner = StandardReasoner(jentic_client=client)
-    memory = ScratchPadMemory()
-
-    # Mock the LLM to prevent network calls and control its output
-    reasoner.llm = MagicMock(spec=BaseLLM)
-    # Mock the entire run method to isolate the agent's logic
-    reasoner.run = MagicMock()
-
-    # 3. Use a mock controller to capture output
+    # Mock the controller and its components
     mock_controller = MagicMock(spec=CLIController)
     mock_controller.inbox = MagicMock()
     mock_controller.outbox = MagicMock()
     mock_controller.intervention_hub = MagicMock()
-    # The agent gets goals from the inbox, not the controller directly.
-    mock_controller.inbox.get_goal.return_value = ("ping", {}) # Simulate user typing 'ping'
     
-    # 4. Assemble the agent
+    # Mock the agent's direct dependencies
+    mock_reasoner = MagicMock()
+    mock_jentic_client = MagicMock()
+    mock_memory = MagicMock()
+
+    # Assemble the agent with mocked components
     agent = InteractiveCLIAgent(
         controller=mock_controller,
-        reasoner=reasoner,
-        jentic_client=client,
-        memory=memory
+        reasoner=mock_reasoner,
+        jentic_client=mock_jentic_client,
+        memory=mock_memory,
     )
+    
+    # Isolate the agent's goal processing logic by mocking process_goal
+    agent.process_goal = MagicMock()
     
     return agent, mock_controller
 
-# Integration Tests 
+# --- Integration-like Tests ---
 
-def test_ping_pong_loop(fully_integrated_agent):
+def test_agent_handles_single_goal_correctly(fully_integrated_agent):
     """
-    Tests a full agent loop from user input to tool execution and final output.
-    The user says "ping", the agent should find the "ping" tool and execute it,
-    resulting in the output "pong".
+    Tests a full agent loop for a single goal, from receiving input
+    to displaying the final output.
     """
     agent, mock_controller = fully_integrated_agent
     
-    # Configure the mock for this test
-    agent.reasoner.run.return_value = ReasoningResult(
-        final_answer="pong", success=True, iterations=1, tool_calls=[]
+    # --- Arrange ---
+    # 1. Simulate the inbox providing a single goal and then stopping
+    mock_controller.inbox.get_next_goal.side_effect = ["test goal", None]
+    
+    # 2. Define the expected result from the mocked processing logic
+    reasoning_result = ReasoningResult(
+        final_answer="The goal was processed successfully.", 
+        success=True, 
+        iterations=1, 
+        tool_calls=[]
     )
+    agent.process_goal.return_value = reasoning_result
 
-    # Run the agent for one cycle
-    agent._handle_goal("ping")
+    # --- Act ---
+    # Run the agent's main loop
+    agent.spin()
 
-    # Assertions
-    # 1. Check that the reasoner was called with the goal
-    agent.reasoner.run.assert_called_once_with("ping")
+    # --- Assert ---
+    # 1. The agent's processing logic was called with the correct goal
+    agent.process_goal.assert_called_once_with("test goal")
 
-    # 2. Check that the outbox displayed the final result.
-    mock_controller.outbox.display_reasoning_result.assert_called_once()
-    result_arg = mock_controller.outbox.display_reasoning_result.call_args[0][0]
-    assert "pong" in result_arg.final_answer
+    # 2. The outbox was called to display the final result
+    mock_controller.outbox.display_reasoning_result.assert_called_once_with(reasoning_result)
 
+    # 3. The inbox was acknowledged (if it has the method)
+    mock_controller.inbox.acknowledge_goal.assert_called_once_with("test goal")
 
-def test_calculator_loop(fully_integrated_agent):
+def test_agent_handles_processing_exception_gracefully(fully_integrated_agent):
     """
-    Tests a more complex loop where the agent needs to find a tool,
-    generate parameters for it, and execute it.
+    Tests that the agent correctly handles an exception raised during
+    goal processing and reports the error.
     """
     agent, mock_controller = fully_integrated_agent
 
-    # Configure the mock reasoner to return a successful result
-    agent.reasoner.run.return_value = ReasoningResult(
-        final_answer="The result is 8", success=True, iterations=1, tool_calls=[]
+    # --- Arrange ---
+    # 1. Simulate the inbox providing a failing goal
+    mock_controller.inbox.get_next_goal.side_effect = ["failing goal", None]
+
+    # 2. Mock the processing logic to raise an error
+    agent.process_goal.side_effect = Exception("A critical error occurred")
+
+    # --- Act ---
+    # Run the agent's main loop
+    agent.spin()
+
+    # --- Assert ---
+    # 1. The agent's processing logic was called
+    agent.process_goal.assert_called_once_with("failing goal")
+
+    # 2. The outbox was called to display the error, not the result
+    mock_controller.outbox.display_goal_error.assert_called_once_with(
+        "failing goal", "Error processing goal: A critical error occurred"
     )
+    mock_controller.outbox.display_reasoning_result.assert_not_called()
 
-    # Change the mocked user input for this test
-    # The agent and controller are already created, so we modify the mock on the agent instance
-    agent.controller.inbox.get_goal.return_value = ("What is 5 plus 3?", {})
-
-    # Run the agent for one cycle
-    agent._handle_goal("What is 5 plus 3?")
-
-    # Assert that the final output contains the correct answer '8'
-    agent.reasoner.run.assert_called_once_with("What is 5 plus 3?")
-    mock_controller.outbox.display_reasoning_result.assert_called_once()
-    result_arg = mock_controller.outbox.display_reasoning_result.call_args[0][0]
-    assert "8" in result_arg.final_answer 
+    # 3. The inbox goal was rejected (if it has the method)
+    mock_controller.inbox.reject_goal.assert_called_once() 

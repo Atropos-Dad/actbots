@@ -104,48 +104,51 @@ class CLIInbox(BaseInbox):
         Returns:
             Next goal string, or None if no more input available
         """
-        if self._closed:
-            return None
+        while not self._closed:
+            try:
+                # Display prompt if using stdin
+                if self.input_stream == sys.stdin:
+                    console.print("[bold blue]ActBots[/bold blue]: ", end="")
 
-        try:
-            # Display prompt if using stdin
-            if self.input_stream == sys.stdin:
-                console.print("[bold blue]ActBots[/bold blue]: ", end="")
+                line = self.input_stream.readline()
 
-            line = self.input_stream.readline()
+                # EOF reached
+                if not line:
+                    self._closed = True
+                    return None
 
-            # EOF reached
-            if not line:
+                user_input = line.strip()
+
+                # Empty line, continue to next prompt
+                if not user_input:
+                    continue
+
+                # Add to history
+                self._history.append(user_input)
+
+                # Check if input is a command
+                command = user_input.lower()
+                is_quit_command = command in ["quit", "exit", "q"]
+
+                if is_quit_command:
+                    self._handle_quit_command("")
+                    return None # Terminate immediately
+                
+                # Handle other commands like 'help', 'history'
+                if command in self._commands:
+                    if self._commands[command](""):
+                        continue # Command was handled, get next input
+
+                # It's a goal, not a command
+                self._current_goal = user_input
+                return user_input
+
+            except (EOFError, KeyboardInterrupt):
+                console.print("\n[yellow]Interrupted by user. Goodbye![/yellow]")
                 self._closed = True
                 return None
-
-            user_input = line.strip()
-
-            # Empty line
-            if not user_input:
-                return self.get_next_goal()  # Try again
-
-            # Add to history
-            self._history.append(user_input)
-
-            # Check if input is a command
-            parts = user_input.split(None, 1)
-            command = parts[0].lower() if parts else ""
-            args = parts[1] if len(parts) > 1 else ""
-
-            if command in self._commands:
-                # Handle command and try again for next goal
-                self._commands[command](args)
-                return self.get_next_goal()
-
-            # It's a goal, not a command
-            self._current_goal = user_input
-            return user_input
-
-        except (EOFError, KeyboardInterrupt):
-            console.print("\n[yellow]Interrupted by user. Goodbye![/yellow]")
-            self._closed = True
-            return None
+        
+        return None
 
     def acknowledge_goal(self, goal: str) -> None:
         """

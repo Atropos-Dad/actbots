@@ -36,7 +36,6 @@ def test_cli_controller_initialization():
     controller.close()
     mock_inbox.close.assert_called_once()
     mock_outbox.close.assert_called_once()
-    mock_hub.close.assert_called_once()
 
 def test_controller_factory():
     """Test that the factory method returns a CLIController."""

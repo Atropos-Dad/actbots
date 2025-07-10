@@ -2,188 +2,116 @@
 Unit tests for InteractiveCLIAgent.
 """
 
-from io import StringIO
-from unittest.mock import Mock, patch
+import pytest
+from unittest.mock import MagicMock
 
-from ..agents.interactive_cli_agent import InteractiveCLIAgent
-from ..reasoners.base_reasoner import ReasoningResult
-from ..memory.scratch_pad import ScratchPadMemory
-from ..communication.inbox.cli_inbox import CLIInbox
-from ..platform.jentic_client import JenticClient
+from jentic_agents.agents.interactive_cli_agent import InteractiveCLIAgent
+from jentic_agents.reasoners.base_reasoner import ReasoningResult
+from jentic_agents.communication.controllers.cli_controller import CLIController
+
+@pytest.fixture
+def fully_integrated_agent(mocker):
+    """
+    Sets up a complete InteractiveCLIAgent with a mocked controller
+    and its sub-components (inbox, outbox, hub).
+    """
+    mock_controller = MagicMock(spec=CLIController)
+    mock_controller.inbox = MagicMock()
+    mock_controller.outbox = MagicMock()
+    mock_controller.intervention_hub = MagicMock()
+    
+    mock_reasoner = MagicMock()
+    mock_jentic_client = MagicMock()
+    mock_memory = MagicMock()
+
+    agent = InteractiveCLIAgent(
+        controller=mock_controller,
+        reasoner=mock_reasoner,
+        jentic_client=mock_jentic_client,
+        memory=mock_memory,
+    )
+    
+    # Mock process_goal to isolate testing of goal handling from reasoning
+    agent.process_goal = MagicMock()
+    
+    return agent, mock_controller
+
+def test_handle_goal_success(fully_integrated_agent):
+    """Test that successful results from a goal are sent to the outbox."""
+    agent, mock_controller = fully_integrated_agent
+    
+    result = ReasoningResult(final_answer="Success!", success=True, iterations=1, tool_calls=[])
+    agent.process_goal.return_value = result
+
+    agent._handle_goal("test goal")
+    
+    agent.process_goal.assert_called_once_with("test goal")
+    mock_controller.outbox.display_reasoning_result.assert_called_once_with(result)
+
+def test_handle_goal_failure(fully_integrated_agent):
+    """Test that failure results from a goal are sent to the outbox."""
+    agent, mock_controller = fully_integrated_agent
+
+    result = ReasoningResult(final_answer="Failure.", success=False, iterations=1, tool_calls=[], error_message="An error occurred")
+    agent.process_goal.return_value = result
+
+    agent._handle_goal("failing goal")
+
+    agent.process_goal.assert_called_once_with("failing goal")
+    mock_controller.outbox.display_reasoning_result.assert_called_once_with(result)
 
 
-class TestInteractiveCLIAgent:
-    """Test cases for InteractiveCLIAgent"""
+def test_handle_goal_exception(fully_integrated_agent):
+    """Test that exceptions during goal processing are handled."""
+    agent, mock_controller = fully_integrated_agent
 
-    def setup_method(self):
-        """Set up test fixtures"""
-        self.reasoner = Mock()
-        self.memory = ScratchPadMemory()
-        self.jentic_client = Mock(spec=JenticClient)
+    agent.process_goal.side_effect = Exception("A big error")
 
-        # Create a sample reasoning result
-        self.sample_result = ReasoningResult(
-            final_answer="Test answer",
-            iterations=1,
-            tool_calls=[{"tool_id": "test_tool", "tool_name": "Test Tool"}],
-            success=True,
-        )
+    agent._handle_goal("failing goal")
 
-        self.reasoner.run.return_value = self.sample_result
+    mock_controller.outbox.display_goal_error.assert_called_once_with(
+        "failing goal", "Error processing goal: A big error"
+    )
 
-    def test_handle_input(self):
-        """Test input handling"""
-        input_stream = StringIO("test goal\nquit\n")
-        inbox = CLIInbox(input_stream=input_stream)
+def test_spin_single_goal(fully_integrated_agent):
+    """Test the agent's main loop for a single goal."""
+    agent, mock_controller = fully_integrated_agent
+    agent.process_goal.reset_mock()
 
-        agent = InteractiveCLIAgent(
-            reasoner=self.reasoner,
-            memory=self.memory,
-            inbox=inbox,
-            jentic_client=self.jentic_client,
-        )
+    # Simulate the inbox providing a single goal and then stopping
+    mock_controller.inbox.get_next_goal.side_effect = ["test goal", None]
+    
+    # Mock the reasoner's output
+    reasoning_result = ReasoningResult(final_answer="Done", success=True, iterations=1, tool_calls=[])
+    agent.process_goal.return_value = reasoning_result
+    
+    agent.spin()
+    
+    agent.process_goal.assert_called_once_with("test goal")
+    mock_controller.outbox.display_reasoning_result.assert_called_once_with(reasoning_result)
 
-        result = agent.handle_input("  test input  ")
-        assert result == "test input"
+def test_spin_with_reasoning_error(fully_integrated_agent):
+    """Test that errors from the reasoner are caught and displayed."""
+    agent, mock_controller = fully_integrated_agent
+    agent.process_goal.reset_mock()
 
-    @patch("builtins.print")
-    def test_handle_output_success(self, mock_print):
-        """Test successful output handling"""
-        input_stream = StringIO("quit\n")
-        inbox = CLIInbox(input_stream=input_stream)
+    mock_controller.inbox.get_next_goal.side_effect = ["failing goal", None]
+    agent.process_goal.side_effect = Exception("A big error")
+    
+    agent.spin()
+    
+    mock_controller.outbox.display_goal_error.assert_called_once_with(
+        "failing goal", "Error processing goal: A big error"
+    )
 
-        agent = InteractiveCLIAgent(
-            reasoner=self.reasoner,
-            memory=self.memory,
-            inbox=inbox,
-            jentic_client=self.jentic_client,
-        )
+def test_spin_keyboard_interrupt(fully_integrated_agent):
+    """Test that a KeyboardInterrupt is handled gracefully."""
+    agent, mock_controller = fully_integrated_agent
 
-        agent.handle_output(self.sample_result)
-
-        # Verify print was called with success message
-        mock_print.assert_called()
-        calls = [call[0][0] for call in mock_print.call_args_list]
-        assert any("✅" in call for call in calls)
-        assert any("Test answer" in call for call in calls)
-
-    @patch("builtins.print")
-    def test_handle_output_failure(self, mock_print):
-        """Test failure output handling"""
-        input_stream = StringIO("quit\n")
-        inbox = CLIInbox(input_stream=input_stream)
-
-        agent = InteractiveCLIAgent(
-            reasoner=self.reasoner,
-            memory=self.memory,
-            inbox=inbox,
-            jentic_client=self.jentic_client,
-        )
-
-        failure_result = ReasoningResult(
-            final_answer="Failed to process",
-            iterations=1,
-            tool_calls=[],
-            success=False,
-            error_message="Test error",
-        )
-
-        agent.handle_output(failure_result)
-
-        # Verify print was called with failure message
-        mock_print.assert_called()
-        calls = [call[0][0] for call in mock_print.call_args_list]
-        assert any("❌" in call for call in calls)
-        assert any("Failed to process" in call for call in calls)
-
-    def test_should_continue(self):
-        """Test should_continue logic"""
-        input_stream = StringIO("test goal\nquit\n")
-        inbox = CLIInbox(input_stream=input_stream)
-
-        agent = InteractiveCLIAgent(
-            reasoner=self.reasoner,
-            memory=self.memory,
-            inbox=inbox,
-            jentic_client=self.jentic_client,
-        )
-
-        # Initially not running
-        assert agent.should_continue() is False
-
-        # After starting, should continue
-        agent._running = True
-        assert agent.should_continue() is True
-
-        # After stopping, should not continue
-        agent.stop()
-        assert agent.should_continue() is False
-
-    @patch("builtins.print")
-    def test_spin_single_goal(self, mock_print):
-        """Test agent spin with single goal"""
-        input_stream = StringIO("What's 2+2?\nquit\n")
-        inbox = CLIInbox(input_stream=input_stream)
-
-        agent = InteractiveCLIAgent(
-            reasoner=self.reasoner,
-            memory=self.memory,
-            inbox=inbox,
-            jentic_client=self.jentic_client,
-        )
-
-        agent.spin()
-
-        # Verify reasoner was called
-        self.reasoner.run.assert_called_once_with("What's 2+2?")
-
-        # Verify output was handled
-        mock_print.assert_called()
-
-    @patch("builtins.print")
-    @patch("sys.stderr")
-    def test_spin_with_error(self, mock_stderr, mock_print):
-        """Test agent spin with processing error"""
-        input_stream = StringIO("error goal\nquit\n")
-        inbox = CLIInbox(input_stream=input_stream)
-
-        agent = InteractiveCLIAgent(
-            reasoner=self.reasoner,
-            memory=self.memory,
-            inbox=inbox,
-            jentic_client=self.jentic_client,
-        )
-
-        # Make reasoner raise an exception
-        self.reasoner.run.side_effect = Exception("Test error")
-
-        agent.spin()
-
-        # Verify error was handled
-        self.reasoner.run.assert_called_once_with("error goal")
-
-    @patch("builtins.print")
-    def test_spin_keyboard_interrupt(self, mock_print):
-        """Test agent spin with keyboard interrupt"""
-        input_stream = StringIO("test goal\n")
-        inbox = CLIInbox(input_stream=input_stream)
-
-        agent = InteractiveCLIAgent(
-            reasoner=self.reasoner,
-            memory=self.memory,
-            inbox=inbox,
-            jentic_client=self.jentic_client,
-        )
-
-        # Mock get_next_goal to raise KeyboardInterrupt
-        def mock_get_goal():
-            raise KeyboardInterrupt()
-
-        inbox.get_next_goal = mock_get_goal
-
-        # Should handle gracefully
-        agent.spin()
-
-        # Verify goodbye message was printed
-        calls = [call[0][0] for call in mock_print.call_args_list]
-        assert any("Interrupted by user" in call for call in calls)
+    mock_controller.inbox.get_next_goal.side_effect = KeyboardInterrupt
+    
+    agent.spin()
+    
+    # The agent should not raise an exception, and should close gracefully.
+    # The 'finally' block in spin() calls self.close(), which calls controller.close()
+    mock_controller.close.assert_called_once()
