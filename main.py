@@ -27,6 +27,8 @@ import sys
 
 from dotenv import load_dotenv
 
+from jentic_agents.reasoners import ReWOOReasoner
+
 # Add the package to the path
 sys.path.insert(0, os.path.dirname(__file__))
 
@@ -34,13 +36,12 @@ from jentic_agents.agents.interactive_cli_agent import InteractiveCLIAgent
 from jentic_agents.inbox.cli_inbox import CLIInbox
 from jentic_agents.memory.scratch_pad import ScratchPadMemory
 from jentic_agents.platform.jentic_client import JenticClient
-from jentic_agents.reasoners.bullet_list_reasoner import BulletPlanReasoner
-from jentic_agents.reasoners.standard_reasoner import StandardReasoner
+from jentic_agents.platform.jentic_tool_iface import JenticToolInterface
 # Local LiteLLM wrapper
 from jentic_agents.utils.llm import LiteLLMChatLLM
 
 # Prefix to detect Gemini provider
-_GEMINI_PREFIX = "gemini/"
+_GEMINI_PREFIX = "gemini"
 
 def main():
     """Run the live demo."""
@@ -64,37 +65,24 @@ def main():
     # ------------------------------------------------------------------
     model_name = os.getenv("LLM_MODEL", "gpt-4o")
 
-    if not os.getenv("JENTIC_API_KEY"):
-        print("❌ ERROR: Missing JENTIC_API_KEY in your .env file.")
-        sys.exit(1)
-
-    using_gemini = model_name.startswith(_GEMINI_PREFIX)
-
-    # print(f"Using Gemini: {using_gemini}")
-    if using_gemini and not os.getenv("GEMINI_API_KEY"):
-        print("❌ ERROR: LLM_MODEL is Gemini but GEMINI_API_KEY is not set in .env.")
-        sys.exit(1)
-
-    if not using_gemini and not os.getenv("OPENAI_API_KEY"):
-        print("❌ ERROR: LLM_MODEL is OpenAI but OPENAI_API_KEY is not set in .env.")
-        sys.exit(1)
-
     try:
         # 1. Initialize the JenticClient
         # This will use the live Jentic services.
         jentic_client = JenticClient()
+        tool_interface = JenticToolInterface(client=jentic_client)
 
         # 2. Initialize the LLM wrapper and Reasoner
         # Build the LLM wrapper for the selected model
         llm_wrapper = LiteLLMChatLLM(model=model_name)
         memory = ScratchPadMemory()
 
-        reasoner = BulletPlanReasoner(
-            jentic=jentic_client,
+
+        reasoner = ReWOOReasoner(
+            tool=tool_interface,
             memory=memory,
             llm=llm_wrapper,
         )
-
+        print('Initializing JenticReasoner')
         # 3. Initialize Memory and Inbox
         inbox = CLIInbox(prompt="Enter your goal: ")
 

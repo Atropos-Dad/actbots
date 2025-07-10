@@ -1,40 +1,76 @@
-# ActBots - Jentic-Powered AI Agent Library
+# ActBots: A Framework for Self-Healing AI Agents
 
-A **clean, reusable Python library** that lets developers spin up AI agents whose reasoning loops automatically *search → load → execute* Jentic workflows and API operations.
+A **clean, modular Python framework** for building robust, autonomous AI agents. ActBots provides a powerful reasoning engine that can dynamically plan, execute, and **reflect on failures** to heal itself, ensuring reliable task completion using the Jentic tool platform.
 
 ## 🎯 Project Goals
 
-- **Modular Architecture**: Clean separation between reasoning, memory, inbox, and platform layers
-- **Extensible Design**: Easy to swap out reasoning strategies without breaking existing code
-- **Jentic Integration**: Built-in support for discovering and executing Jentic workflows
-- **Production Ready**: Comprehensive testing, type hints, and dependency isolation
+- **Autonomous & Self-Healing**: Build agents that can recover from tool errors and unexpected issues without human intervention.
+- **Modular Architecture**: Enforce a clean separation between the agent's reasoning, memory, and the tools it uses.
+- **Extensible by Design**: Easily swap reasoning strategies or add new tool providers without rewriting the core logic.
+- **Production Ready**: Emphasize comprehensive testing, strict type hints, and clear dependency management.
 
 ## 🏗️ Architecture
 
 ```
 jentic_agents/
 │
-├─ reasoners/              # Reasoning loop implementations
-│   ├─ base_reasoner.py   # Abstract ReAct contract
-│   └─ standard_reasoner.py # Concrete ReAct + Jentic integration
+├─ agents/                             # High-level agent orchestration
+│   ├─ base_agent.py                   # Abstract agent interface
+│   └─ interactive_cli_agent.py        # Concrete CLI-based agent
 │
-├─ agents/                 # Agent orchestration layer
-│   ├─ base_agent.py      # Abstract agent interface
-│   └─ interactive_cli_agent.py # CLI-based agent
+├─ reasoners/                          # Core reasoning and self-healing logic
+│   ├─ rewoo_reasoner_contract.py      # Abstract ReWOO Reasoner contract
+│   └─ rewoo_reasoner/                 # ReWOO implementation
+│       └─ core.py                     # The ReWOOReasoner with reflection logic
 │
-├─ memory/                 # Memory backends
-│   ├─ base_memory.py     # Abstract memory interface
-│   └─ scratch_pad.py     # Simple dict-based memory
+├─ tools/                              # The generic tool abstraction layer
+│   ├─ interface.py                    # Defines the abstract ToolInterface contract
+│   └─ models.py                       # Canonical Tool data model
 │
-├─ inbox/                  # Goal/task delivery systems
-│   ├─ base_inbox.py      # Abstract inbox interface
-│   └─ cli_inbox.py       # CLI input inbox
+├─ platform/                           # Concrete implementations for external services
+│   ├─ jentic_client.py                # Low-level Jentic SDK wrapper
+│   └─ jentic_tool_iface.py            # Jentic implementation of the ToolInterface
 │
-├─ platform/               # External service adapters
-│   └─ jentic_client.py   # Jentic SDK wrapper
+├─ memory/                             # Pluggable memory backends
+│   ├─ base_memory.py                  # Abstract memory interface
+│   └─ scratch_pad.py                  # Simple in-memory key-value store
 │
-└─ tests/                  # Comprehensive test suite
+├─ inbox/                              # Goal/task delivery systems
+│   ├─ base_inbox.py                   # Abstract inbox interface
+│   └─ cli_inbox.py                    # CLI input inbox
+
 ```
+
+## 🧠 Core Components
+
+### Agents
+Agents are the top-level orchestrators that wire together all other components.
+- **`BaseAgent`**: The abstract interface defining the agent's main `spin()` loop.
+- **`InteractiveCLIAgent`**: A concrete agent for interactive use via the command line.
+
+### Reasoners
+The reasoning layer implements the core logic for planning, acting, and self-healing.
+- **`BaseReWOOReasoner`**: The abstract contract for a ReWOO (Reason-without-Observation) reasoner, defined in `rewoo_reasoner_contract.py`.
+- **`ReWOOReasoner`**: The concrete implementation that generates plans and uses a **reflection loop** to recover from tool failures.
+
+### Tools
+The tool layer provides a generic abstraction for any action an agent can take.
+- **`ToolInterface`**: An abstract class defining the contract for any tool provider (e.g., `search`, `execute`).
+
+### Platform
+The platform layer contains concrete implementations of the `ToolInterface`.
+- **`JenticToolInterface`**: The adapter that allows the reasoner to use the Jentic platform for its tools.
+- **`JenticClient`**: A low-level wrapper around the Jentic SDK.
+
+### Memory
+Pluggable memory backends for storing information across reasoning steps.
+- **`BaseMemory`**: A simple key-value storage interface.
+- **`ScratchPadMemory`**: An in-memory dictionary-based implementation.
+
+### Inbox
+Goal delivery systems that feed tasks to the agent.
+- **`BaseInbox`**: An abstract interface for receiving goals.
+- **`CLIInbox`**: An implementation that gets goals from interactive command-line input.
 
 ## 🚀 Quick Start
 
@@ -45,169 +81,82 @@ jentic_agents/
 git clone <repository-url>
 cd actbots
 
-# Install dependencies (creates isolated .venv)
-make install
+# Install dependencies using PDM
+pdm install
 
 # Run tests
-make test
+pdm run test
 
 # Check code quality
-make lint
+pdm run lint
 ```
+
+### Configuration
+
+Before running the agent, you need to create a `.env` file in the root of the project to store your API keys and other secrets. The application will automatically load these variables.
+
+Create a file named `.env` and add the following content, replacing the placeholder values with your actual keys:
+
+```dotenv
+# Jentic Platform API Key
+JENTIC_API_KEY="your-jentic-api-key-here"
+
+# LLM Provider API Keys (use the one for your chosen model)
+OPENAI_API_KEY="your-openai-api-key-here"
+ANTHROPIC_API_KEY="your-anthropic-api-key-here"
+GEMINI_API_KEY="your-google-gemini-api-key-here"
+
+# Tool-Specific Secrets (add as needed)
+DISCORD_BOT_TOKEN="your-discord-bot-token-here"
+```
+
+**Note:** The `JENTIC_API_KEY` and at least one LLM provider key are essential for the agent to function.
 
 ### Basic Usage
 
-```python
-from jentic_agents.platform.jentic_client import JenticClient
-from jentic_agents.reasoners.standard_reasoner import StandardReasoner
-from jentic_agents.memory.scratch_pad import ScratchPadMemory
-from jentic_agents.inbox.cli_inbox import CLIInbox
-from jentic_agents.agents.interactive_cli_agent import InteractiveCLIAgent
+The following example demonstrates how to set up and run the `JenticReWOOReasoner`.
 
-# Create components
-jentic_client = JenticClient(api_key="your-key-here")
-reasoner = StandardReasoner(jentic_client=jentic_client)
+```python
+import os
+from jentic_agents.utils.llm import LiteLLMChatLLM
+from jentic_agents.memory.scratch_pad import ScratchPadMemory
+from jentic_agents.platform.jentic_tool_iface import JenticToolInterface
+from jentic_agents.reasoners.rewoo_reasoner.core import ReWOOReasoner
+from jentic_agents.platform.jentic_client import JenticClient
+from jentic_agents.agents.interactive_cli_agent import InteractiveCLIAgent
+from jentic_agents.inbox.cli_inbox import CLIInbox
+# 1. Set up the components
+llm_wrapper = LiteLLMChatLLM(model='claude-sonnet-4-20250514')
 memory = ScratchPadMemory()
+jentic_client = JenticClient(api_key='Jentic API KEY')
+jentic_tools = JenticToolInterface(client=jentic_client)
+
 inbox = CLIInbox()
 
-# Create and run agent
+# 2. Instantiate the Reasoner
+reasoner = ReWOOReasoner(
+    llm=llm_wrapper,
+    tool=jentic_tools,
+    memory=memory,
+)
+
 agent = InteractiveCLIAgent(
     reasoner=reasoner,
     memory=memory,
     inbox=inbox,
     jentic_client=jentic_client
 )
-
 agent.spin()  # Start the interactive loop
-```
 
-### Demo Mode
-
-Run the included demo to see the system in action with mock data:
-
-```bash
-python demo.py
-```
-
-## 🧠 Core Components
-
-### Reasoners
-
-The reasoning layer implements the **ReAct pattern** (plan → select_tool → act → observe → evaluate → reflect):
-
-- **BaseReasoner**: Abstract interface defining the reasoning contract
-- **StandardReasoner**: Concrete implementation using OpenAI + Jentic integration
-
-### Agents
-
-Agents orchestrate the reasoning loop with memory, inbox, and platform components:
-
-- **BaseAgent**: Abstract agent interface with `spin()` main loop
-- **InteractiveCLIAgent**: CLI-based agent for interactive use
-
-### Memory
-
-Pluggable memory backends for storing information across reasoning sessions:
-
-- **BaseMemory**: Simple key-value storage interface
-- **ScratchPadMemory**: In-memory dict-based implementation
-
-### Inbox
-
-Goal delivery systems that feed tasks to agents:
-
-- **BaseInbox**: Stream interface for goals from various sources
-- **CLIInbox**: Interactive command-line goal input
-
-### Platform
-
-External service adapters:
-
-- **JenticClient**: Thin wrapper around jentic-sdk with auth, retries, and logging
-
-## 🧪 Testing
-
-The project includes comprehensive tests with >90% coverage:
-
-```bash
-# Run all tests
-make test
-
-# Run specific test files
-pytest jentic_agents/tests/test_reasoner.py -v
-
-# Run with coverage
-pytest --cov=jentic_agents
-```
-
-## 🔧 Development
-
-### Project Structure
-
-- **Strict interfaces first**: Abstract base classes with type hints
-- **Dependency isolation**: All dependencies in project-local `.venv`
-- **Single source of truth**: Only `JenticClient` contacts the Jentic SDK
-- **Stateless reasoning**: `BaseReasoner.run()` returns packaged results
-- **Testability**: External calls are injectable for easy mocking
-
-### Code Quality
-
-```bash
-# Linting and formatting
-make lint
-
-# Type checking (strict mode)
-make lint-strict
-
-# Auto-fix common issues
-ruff check . --fix
-```
-
-### Adding New Components
-
-1. **New Reasoner**: Extend `BaseReasoner` and implement all abstract methods
-2. **New Agent**: Extend `BaseAgent` and override I/O methods
-3. **New Memory**: Extend `BaseMemory` with your storage backend
-4. **New Inbox**: Extend `BaseInbox` for different goal sources
-
-## 📊 Testing Criteria
-
-The project meets the following quality standards:
-
-1. **Unit Tests**: >90% coverage on core modules
-2. **Error Handling**: Explicit exceptions with debugging context
-3. **Static Quality**: Ruff linting passes, mypy type checking available
-4. **Integration**: Demo script shows end-to-end functionality
-5. **Isolation**: No global dependencies, clean `.venv` usage
-
-## 🎪 Demo Results
-
-The demo script successfully demonstrates:
-
-```
-🚀 Starting ActBots Demo
-==================================================
-AI Agent started. Type 'quit' to exit.
-==================================================
-✅ **Answer:** The answer to 2+2 is 4, as confirmed by the echo tool result: Echo: 2+2.
-
-📋 **Used 1 tool(s) in 2 iteration(s):**
-  1. Echo Tool
 ```
 
 ## 🔮 Future Enhancements
 
-- **Vector Memory**: Add vector database memory backend
-- **Advanced Reasoners**: Implement Reflexion, Tree of Thoughts
-- **More Inboxes**: Slack, REST API, message queue integrations
-- **Real Jentic SDK**: Replace mocks with actual jentic-sdk integration
-- **Web Interface**: Add web-based agent interface
-- **Deployment**: Docker, Kubernetes deployment configurations
-
-## 📝 License
-
-[Add your license here]
+- **Advanced Planning**: Enhance the plan parser to understand conditional logic (`if fails...`).
+- **Smarter Reflection**: Improve the reflection prompts with more sophisticated failure analysis.
+- **More Tool Interfaces**: Implement interfaces for other tool providers (e.g., local shell commands, other APIs).
+- **Vector Memory**: Add a vector database for more complex memory retrieval.
 
 ---
 
-**Built following the ActBots specification for modular, future-proof Jentic-powered autonomous agents.**
+**Built for a new generation of resilient, modular, and truly autonomous AI agents.**
