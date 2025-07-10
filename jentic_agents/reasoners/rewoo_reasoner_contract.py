@@ -64,7 +64,7 @@ class BaseReWOOReasoner(ABC):
         log.info("=== REASONER START === goal=%s", goal)
         state = ReasonerState(goal=goal)
 
-        # 1️⃣ PLAN
+        # PLAN
         self._generate_plan(state)
         if not state.plan:
             raise RuntimeError("Planner produced an empty plan")
@@ -74,7 +74,7 @@ class BaseReWOOReasoner(ABC):
         tool_calls: List[Dict[str, Any]] = []
         iteration = 0
 
-        # 2️⃣ EXECUTE LOOP
+        # EXECUTE LOOP
         while state.plan and iteration < max_iterations and not state.is_complete:
             iteration += 1
             step = state.plan.popleft()
@@ -96,7 +96,7 @@ class BaseReWOOReasoner(ABC):
                     log.error("Reflection also failed: %s", reflect_exc)
             log.info("Step status after execution: %s", step.status)
 
-        # 3️⃣ FINISH
+        # FINISH
         final_answer = self._synthesize_final_answer(state)
         success = state.is_complete
         log.info("=== REASONER END === success=%s iterations=%d", success, iteration)

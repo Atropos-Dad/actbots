@@ -29,6 +29,7 @@ class ReWOOReasoner(BaseReWOOReasoner):
         llm: BaseLLM,
     ) -> None:
         super().__init__(tool=tool, memory=memory, llm=llm)
+        self._tool_cache: Dict[str, Tool] = {}
 
     def run(self, goal: str, max_iterations: int = 20):  # noqa: D401
         return super().run(goal, max_iterations)
@@ -202,18 +203,6 @@ class ReWOOReasoner(BaseReWOOReasoner):
         ]
         return self._llm.chat(messages, **kwargs).strip()
 
-    # ------------------------------------------------------------------
-    # Tool handling logic (moved from JenticToolBag)
-    # ------------------------------------------------------------------
-
-    @property
-    def _tool_cache(self) -> Dict[str, Any]:
-        """Return a per-instance cache for loaded tool metadata."""
-        cache = getattr(self, "__tool_cache", None)
-        if cache is None:
-            cache = {}
-            setattr(self, "__tool_cache", cache)
-        return cache
 
     def _select_tool(self, step: Step) -> str:
         """Search for tools and ask the LLM to pick the best one for *step*."""
