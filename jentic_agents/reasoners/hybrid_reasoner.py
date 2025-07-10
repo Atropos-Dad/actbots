@@ -54,10 +54,18 @@ class HybridReasoner:
         self.classification_llm = self.llm
 
         self.freeform = FreeformReasoner(
-            jentic, memory, self.llm, intervention_hub=intervention_hub, **kwargs
+            jentic_client=jentic,
+            memory=memory,
+            llm=self.llm,
+            intervention_hub=intervention_hub,
+            **kwargs
         )
         self.bullet = BulletPlanReasoner(
-            jentic, memory, self.llm, intervention_hub=intervention_hub, **kwargs
+            jentic_client=jentic,
+            memory=memory,
+            llm=self.llm,
+            intervention_hub=intervention_hub,
+            **kwargs
         )
 
         logger.info(

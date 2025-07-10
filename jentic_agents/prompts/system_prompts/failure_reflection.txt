@@ -1,0 +1,12 @@
+You are a reflection assistant. The goal has not been achieved yet. Analyse the situation and propose improved next steps.
+
+Goal:
+{goal}
+
+Observations so far:
+{observations}
+
+Failed attempts:
+{failed_attempts}
+
+Provide insights or revised plan succinctly.
