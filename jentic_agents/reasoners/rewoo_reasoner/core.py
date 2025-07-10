@@ -1,38 +1,33 @@
-"""Core orchestration logic for the ReWOO Reasoner with JenticTools.
-
-This skeleton follows the ReWOO (plan first, then bind tools) + Reflection
-paradigm.
-"""
-from __future__ import annotations
-
-from typing import Any, Dict
 import json
-from copy import deepcopy
-
-from jentic_agents.reasoners.rewoo_reasoner.exceptions import MissingInputError, ToolExecutionError, ReasoningStepError
-from jentic_agents.reasoners.rewoo_reasoner_contract import BaseReWOOReasoner
-from jentic_agents.reasoners.jentic_toolbag import JenticToolBag
-from jentic_agents.reasoners.models import ReasonerState, Step
-from jentic_agents.reasoners.rewoo_reasoner._parser import parse_bullet_plan
-import jentic_agents.reasoners.rewoo_reasoner._prompts as prompts  # noqa: WPS433 (importing internal module)
-
-from jentic_agents.platform.jentic_client import JenticClient  # type: ignore
-from jentic_agents.memory.base_memory import BaseMemory
-from jentic_agents.utils.llm import BaseLLM
 import re
+from copy import deepcopy
+from typing import Any, Dict, List
 
-class JenticReWOOReasoner(JenticToolBag, BaseReWOOReasoner):
+import jentic_agents.reasoners.rewoo_reasoner._prompts as prompts
+from jentic_agents.memory.base_memory import BaseMemory
+from jentic_agents.reasoners.models import ReasonerState, Step, Tool
+from jentic_agents.reasoners.rewoo_reasoner.exceptions import (
+    MissingInputError,
+    ReasoningStepError,
+    ToolExecutionError,
+)
+from jentic_agents.reasoners.rewoo_reasoner._parser import parse_bullet_plan
+from jentic_agents.reasoners.rewoo_reasoner_contract import BaseReWOOReasoner
+from jentic_agents.tools.interface import ToolInterface
+from jentic_agents.utils.llm import BaseLLM
+
+
+class JenticReWOOReasoner(BaseReWOOReasoner):
     """Reasoner implementing ReWOO + Reflection on top of Jentic tools."""
 
     def __init__(
         self,
         *,
-        jentic_client: JenticClient,
+        tool: ToolInterface,
         memory: BaseMemory,
         llm: BaseLLM,
     ) -> None:
-        super().__init__(jentic_client=jentic_client, memory=memory, llm=llm)
-
+        super().__init__(tool=tool, memory=memory, llm=llm)
 
     def run(self, goal: str, max_iterations: int = 20):  # noqa: D401
         return super().run(goal, max_iterations)
@@ -43,7 +38,6 @@ class JenticReWOOReasoner(JenticToolBag, BaseReWOOReasoner):
         plan_md = self._call_llm(prompt)
         self._logger.info(f"phase=PLAN_GENERATED plan={plan_md}")
         state.plan = parse_bullet_plan(plan_md)
-
 
     def _execute_step(self, step: Step, state: ReasonerState) -> Dict[str, Any]:  # noqa: D401
         """Execute a single plan step with retry bookkeeping."""
@@ -64,14 +58,19 @@ class JenticReWOOReasoner(JenticToolBag, BaseReWOOReasoner):
         tool_id = self._select_tool(step)
         params = self._generate_params(step, tool_id, inputs)
         try:
-            result = self._jentic.execute(tool_id, params)
-            self._logger.info("phase=EXECUTE_OK run_id=%s tool_id=%s", getattr(self, '_run_id', 'NA'), tool_id)
+            result = self.tool.execute(tool_id, params)
+            self._logger.info("phase=EXECUTE_OK run_id=%s tool_id=%s", getattr(self, "_run_id", "NA"), tool_id)
         except Exception as exc:  # noqa: BLE001
-            self._logger.warning("phase=EXECUTE_FAIL run_id=%s tool_id=%s error=%s", getattr(self, '_run_id', 'NA'), tool_id, exc)
+            self._logger.warning(
+                "phase=EXECUTE_FAIL run_id=%s tool_id=%s error=%s",
+                getattr(self, "_run_id", "NA"),
+                tool_id,
+                exc,
+            )
             raise ToolExecutionError(str(exc)) from exc
 
         step.status = "done"
-        step.result = result['result'].output
+        step.result = result["result"].output
         # Persist in-memory for downstream steps
         self._store_step_output(step, state)
         return {"tool_id": tool_id, "params": params, "result": result}
@@ -93,7 +92,7 @@ class JenticReWOOReasoner(JenticToolBag, BaseReWOOReasoner):
         tool_schema = {}
         try:
             tool_execution_info = self._get_tool(self._select_tool(step))
-            tool_schema = tool_execution_info['parameters']
+            tool_schema = tool_execution_info["parameters"]
         except Exception:
             pass
 
@@ -131,9 +130,9 @@ class JenticReWOOReasoner(JenticToolBag, BaseReWOOReasoner):
     def _synthesize_final_answer(self, state: ReasonerState) -> str:  # noqa: D401
         """Combine successful step results into a final answer."""
         prompt = prompts.FINAL_ANSWER_SYNTHESIS_PROMPT.format(
-        goal=state.goal,
-        history="\n".join(state.history),
-    )
+            goal=state.goal,
+            history="\n".join(state.history),
+        )
         state.is_complete = True
         return self._call_llm(prompt)
 
@@ -158,9 +157,9 @@ class JenticReWOOReasoner(JenticToolBag, BaseReWOOReasoner):
             m = _JSON_FENCE_RE.search(reply)
             if m:
                 reply = m.group(1).strip()
-            return json.loads(reply)
-        except Exception as exec:
-            raise ReasoningStepError(str(exec))
+            return reply
+        except Exception as exc:
+            raise ReasoningStepError(str(exc)) from exc
 
     def _fetch_inputs(self, step: Step) -> Dict[str, Any]:
         """Retrieve all required inputs from memory or raise ``ge``."""
@@ -182,9 +181,7 @@ class JenticReWOOReasoner(JenticToolBag, BaseReWOOReasoner):
         """
         if step.output_key and step.result is not None:
             # Unwrap OperationResult-like objects to their payload for JSON safety
-            value_to_store = (
-                step.result["result"].output if hasattr(step.result, "result") else step.result
-            )
+            value_to_store = step.result["result"].output if hasattr(step.result, "result") else step.result
             try:
                 self._memory.store(step.output_key, value_to_store)
                 snippet = str(value_to_store).replace("\n", " ")
@@ -203,3 +200,132 @@ class JenticReWOOReasoner(JenticToolBag, BaseReWOOReasoner):
             {"role": "user", "content": prompt},
         ]
         return self._llm.chat(messages, **kwargs).strip()
+
+    # ------------------------------------------------------------------
+    # Tool handling logic (moved from JenticToolBag)
+    # ------------------------------------------------------------------
+
+    @property
+    def _tool_cache(self) -> Dict[str, Any]:
+        """Return a per-instance cache for loaded tool metadata."""
+        cache = getattr(self, "__tool_cache", None)
+        if cache is None:
+            cache = {}
+            setattr(self, "__tool_cache", cache)
+        return cache
+
+    def _select_tool(self, step: Step) -> str:
+        """Search for tools and ask the LLM to pick the best one for *step*."""
+        tools = self._search_tools(step)
+        self._logger.info(
+            "phase=SELECT_SEARCH run_id=%s step_text=%s hits=%s",
+            getattr(self, "_run_id", "NA"),
+            step.text,
+            [f"{t.id}:{t.name}" for t in tools],
+        )
+
+        tools_json = json.dumps(
+            [
+                {
+                    "id": t.id,
+                    "name": t.name,
+                    "description": t.description,
+                    "api_name": t.api_name,
+                }
+                for t in tools
+            ],
+            ensure_ascii=False,
+        )
+
+        prompt = prompts.TOOL_SELECTION_PROMPT.format(step=step.text, tools_json=tools_json)
+        reply = self._call_llm(prompt).strip()
+
+        if self._is_valid_tool_reply(reply, tools):
+            return reply
+
+        # Simple retry
+        retry_prompt = (
+            f"Your reply '{reply}' was not in the list of valid tool IDs. "
+            f"Please select from this list or reply 'none'.\n"
+            f"List: {[t.id for t in tools]}"
+        )
+        reply = self._call_llm(retry_prompt).strip()
+        if self._is_valid_tool_reply(reply, tools):
+            return reply
+
+        raise ValueError(f"Could not obtain valid tool id for step '{step.text}'. Last reply: {reply}")
+
+    def _search_tools(self, step: Step, top_k: int = 20) -> List[Tool]:
+        """Return *top_k* potential tools for *step* using the tool interface."""
+        hits = self.tool.search(step.text, top_k=top_k)
+        tools: List[Tool] = []
+        for hit in hits:
+            tools.append(
+                Tool(
+                    id=hit["id"],
+                    name=hit.get("name", "unknown"),
+                    description=hit.get("description", ""),
+                    api_name=hit.get("api_name", "unknown"),
+                    parameters={},
+                )
+            )
+        return tools
+
+    def _get_tool(self, tool_id: str) -> Dict[str, Any]:
+        """Load and cache full tool execution info via the tool interface."""
+        if tool_id in self._tool_cache:
+            return self._tool_cache[tool_id]
+
+        try:
+            tool_execution_info = self.tool.load(tool_id)
+            self._tool_cache[tool_id] = tool_execution_info
+            return tool_execution_info
+        except Exception as exc:  # noqa: BLE001
+            self._logger.warning("Could not load tool execution info Tool: %s Error: %s", tool_id, exc)
+            return {}
+
+    def _generate_params(
+        self,
+        step: Step,
+        tool_id: str,
+        inputs: Dict[str, Any],
+    ) -> Dict[str, Any]:
+        """Use the LLM to propose parameters for *tool_id*."""
+        tool_execution_info = self._get_tool(tool_id)
+
+        forced_key = f"forced_params:{step.text}"
+        forced = self._memory.retrieve(forced_key) if hasattr(self, "_memory") else None
+        if forced:
+            return forced
+
+        allowed_keys = ",".join(tool_execution_info.get("parameters", {}).keys())
+        prompt = prompts.PARAMETER_GENERATION_PROMPT.format(
+            step=step.text,
+            tool_schema=json.dumps(tool_execution_info.get("parameters", {}), ensure_ascii=False),
+            step_inputs=json.dumps(inputs, ensure_ascii=False),
+            allowed_keys=allowed_keys,
+        )
+        raw = self._call_llm(prompt).strip()
+        params = self._parse_json_or_retry(raw, prompt)
+
+        # Keep only parameters that the tool schema recognises to avoid 400s.
+        params = {k: v for k, v in params.items() if k in tool_execution_info.get("parameters", {})}
+        return params
+
+    def _parse_json_or_retry(self, raw: str, original_prompt: str) -> Dict[str, Any]:
+        """Best-effort JSON parse with a single retry on failure."""
+        try:
+            return json.loads(raw)
+        except json.JSONDecodeError:
+            self._logger.warning("phase=JSON_PARSE_FAIL raw='%s'", raw)
+            # Ask the LLM to fix the JSON, this is a single-shot correction
+            prompt = prompts.JSON_CORRECTION_PROMPT.format(bad_json=raw, original_prompt=original_prompt)
+            raw = self._call_llm(prompt).strip()
+            return json.loads(raw)
+
+    @staticmethod
+    def _is_valid_tool_reply(reply: str, tools: List[Tool]) -> bool:
+        """Return *True* iff *reply* is a valid tool id from *tools* or 'none'."""
+        if reply == "none":
+            return True
+        return any(t.id == reply for t in tools)

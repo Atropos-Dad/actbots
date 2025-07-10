@@ -6,7 +6,7 @@ import sys
 from typing import Any
 
 from .base_agent import BaseAgent
-from ..reasoners.base_reasoner import ReasoningResult
+from ..reasoners.models import ReasoningResult
 
 logger = logging.getLogger(__name__)
 

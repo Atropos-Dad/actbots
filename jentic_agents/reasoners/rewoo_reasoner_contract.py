@@ -15,7 +15,7 @@ from typing import Any, Dict, List
 from jentic_agents.reasoners.models import ReasoningResult
 
 from jentic_agents.reasoners.models import ReasonerState, Step
-from jentic_agents.platform.jentic_client import JenticClient  # type: ignore
+from jentic_agents.tools.interface import ToolInterface
 from jentic_agents.memory.base_memory import BaseMemory
 from jentic_agents.utils.llm import BaseLLM
 from jentic_agents.utils.logger import get_logger
@@ -41,11 +41,11 @@ class BaseReWOOReasoner(ABC):
     def __init__(
         self,
         *,
-        jentic_client: JenticClient,
+        tool: ToolInterface,
         memory: BaseMemory,
         llm: BaseLLM,
     ) -> None:
-        self._jentic = jentic_client
+        self.tool = tool
         self._memory = memory
         self._llm = llm
         self._logger = get_logger(self.__class__.__name__)

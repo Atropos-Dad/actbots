@@ -4,7 +4,8 @@ Abstract base class for AI agents that compose reasoner, memory, inbox, and Jent
 from abc import ABC, abstractmethod
 from typing import Any
 
-from ..reasoners.base_reasoner import BaseReasoner, ReasoningResult
+from ..reasoners.rewoo_reasoner_contract import BaseReWOOReasoner
+from ..reasoners.models import ReasoningResult
 from ..memory.base_memory import BaseMemory
 from ..inbox.base_inbox import BaseInbox
 from ..platform.jentic_client import JenticClient
@@ -25,7 +26,7 @@ class BaseAgent(ABC):
     
     def __init__(
         self,
-        reasoner: BaseReasoner,
+        reasoner: BaseReWOOReasoner,
         memory: BaseMemory,
         inbox: BaseInbox,
         jentic_client: JenticClient
