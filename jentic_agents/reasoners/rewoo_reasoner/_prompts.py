@@ -152,12 +152,16 @@ REASONING_STEP_PROMPT: str = (
 
 STEP_CLASSIFICATION_PROMPT: str = (
     """
-    Decide if the following task should use an external API/tool or can be done with pure reasoning.
-    Reply with exactly one word: "tool" or "reasoning".
-    STRICT RULE:
-    - If the task requires an external API/tool, reply with "tool".
-    - If the task can be done with pure reasoning, reply with "reasoning".
-    - No additional text, no markdown, no backticks, no ```json blocks.
+    Your task is to classify a step as either 'tool' or 'reasoning'.
+    - 'tool': The step requires calling an external API or tool to fetch new information or perform an action in the outside world (e.g., search, send email, post a message).
+    - 'reasoning': The step involves processing, filtering, summarizing, or transforming data that is ALREADY AVAILABLE in memory.
+
+    Carefully examine the task and the available data in 'Existing memory keys'.
+
+    STRICT RULES:
+    1. If the task can be accomplished using ONLY the data from 'Existing memory keys', you MUST classify it as 'reasoning'.
+    2. If the task requires fetching NEW data or interacting with an external system, classify it as 'tool'.
+    3. Your reply must be a single word: either "tool" or "reasoning". No other text.
 
     Task: {step_text}
     Existing memory keys: {keys_list}
