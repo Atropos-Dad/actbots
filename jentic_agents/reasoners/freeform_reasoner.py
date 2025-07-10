@@ -18,8 +18,7 @@ import re
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional
 
-from .core.abstract_reasoner import ReasonerInfrastructure
-from .base_reasoner import ReasoningResult
+from .base_reasoner import BaseReasoner, ReasoningResult
 from ..utils.logger import get_logger
 
 logger = get_logger(__name__)
@@ -43,7 +42,7 @@ class ConversationState:
     error_message: Optional[str] = None
 
 
-class FreeformReasoner(ReasonerInfrastructure):
+class FreeformReasoner(BaseReasoner):
     """A minimal reasoner that lets the LLM drive the entire process."""
 
     def __init__(

@@ -48,8 +48,7 @@ from ..utils.parsing_helpers import (
     strip_backtick_fences,
 )
 from ..utils.prompt_loader import load_prompt
-from .core.abstract_reasoner import ReasonerInfrastructure
-from .base_reasoner import StepType
+from .base_reasoner import BaseReasoner, StepType
 from ..utils.logger import get_logger
 
 # Initialize module logger using the shared logging utility
@@ -190,7 +189,7 @@ def parse_bullet_plan(markdown: str) -> deque[Step]:
     return deque(leaf_steps)
 
 
-class BulletPlanReasoner(ReasonerInfrastructure):
+class BulletPlanReasoner(BaseReasoner):
     """Concrete Reasoner that follows the BulletPlan strategy."""
 
 

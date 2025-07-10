@@ -6,13 +6,12 @@ import logging
 from typing import Any, Dict, List, Optional
 import json
 
-from .core.abstract_reasoner import ReasonerInfrastructure
-from .base_reasoner import ReasoningResult
+from .base_reasoner import BaseReasoner, ReasoningResult
 
 logger = logging.getLogger(__name__)
 
 
-class StandardReasoner(ReasonerInfrastructure):
+class StandardReasoner(BaseReasoner):
     """
     Concrete implementation of ReAct reasoning loop with Jentic SDK integration.
 
