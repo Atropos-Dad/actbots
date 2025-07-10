@@ -17,7 +17,7 @@ from jentic_agents.tools.interface import ToolInterface
 from jentic_agents.utils.llm import BaseLLM
 
 
-class JenticReWOOReasoner(BaseReWOOReasoner):
+class ReWOOReasoner(BaseReWOOReasoner):
     """Reasoner implementing ReWOO + Reflection on top of Jentic tools."""
 
     def __init__(
