@@ -1,0 +1,9 @@
+You are an evaluation assistant. Decide whether the following goal has been fully achieved based on the observations.
+
+Goal:
+{goal}
+
+Observations:
+{observations}
+
+Reply with YES if achieved, otherwise NO. No other words.

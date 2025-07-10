@@ -47,17 +47,8 @@ from ..utils.parsing_helpers import (
     strip_backtick_fences,
 )
 from ..utils.prompt_loader import load_prompt
-from .base_reasoner import BaseReasoner
-from ..platform.jentic_client import JenticClient  # local wrapper, not the raw SDK
-from ..utils.llm import BaseLLM, LiteLLMChatLLM
-from ..memory.scratch_pad import ScratchPadMemory
+from .base_reasoner import BaseReasoner, StepType
 from ..utils.logger import get_logger
-from .base_reasoner import StepType
-from ..communication.hitl.base_intervention_hub import BaseInterventionHub, NoEscalation
-from ..utils.config import get_config
-
-# Load configuration for model settings
-config = get_config()
 
 # Initialize module logger using the shared logging utility
 logger = get_logger(__name__)
@@ -200,27 +191,6 @@ def parse_bullet_plan(markdown: str) -> deque[Step]:
 class BulletPlanReasoner(BaseReasoner):
     """Concrete Reasoner that follows the BulletPlan strategy."""
 
-    def safe_llm_call(self, messages, **kwargs) -> str:
-        """
-        Call LLM in async-safe way. If we're in an async context, run in thread pool
-        to avoid blocking the event loop. Otherwise use sync method.
-        """
-        try:
-            # Check if we're in an async context
-            import asyncio
-            loop = asyncio.get_running_loop()
-            if loop.is_running():
-                # We're in an async context, run in thread pool to avoid blocking
-                import concurrent.futures
-                with concurrent.futures.ThreadPoolExecutor() as executor:
-                    future = executor.submit(self.llm.chat, messages, **kwargs)
-                    return future.result()
-        except RuntimeError:
-            # No running event loop, use sync method
-            pass
-        
-        # Use sync method
-        return self.llm.chat(messages, **kwargs)
 
     def _build_search_query(self, step: "Step", state: "ReasonerState") -> str:
         """
@@ -239,7 +209,7 @@ class BulletPlanReasoner(BaseReasoner):
                 prompt = kw_template.format(context_text=contextual_text)
 
             # Add human guidance context if available
-            context_aware_prompt = self._add_human_guidance_to_prompt(prompt)
+            context_aware_prompt = self.add_human_guidance_to_prompt(prompt)
 
             reply = self.safe_llm_call([{"role": "user", "content": context_aware_prompt}]).strip()
             if reply:
@@ -264,6 +234,8 @@ class BulletPlanReasoner(BaseReasoner):
         """
         if not hits:
             return None
+
+        # Use BulletPlan-specific LLM prompt for tool selection (advanced context)
 
         # Build numbered candidate list
         numbered_lines: List[str] = []
@@ -346,117 +318,30 @@ class BulletPlanReasoner(BaseReasoner):
 
     def __init__(
         self,
-        jentic: JenticClient,
-        memory: ScratchPadMemory,
-        llm: Optional[BaseLLM] = None,
-        model: Optional[str] = None,
-        max_iters: int = 20,
-        search_top_k: int = 5,  # Start with a smaller k
-        intervention_hub: Optional[BaseInterventionHub] = None,
-    ) -> None:
+        jentic_client,
+        memory,
+        llm=None,
+        model=None,
+        max_iters=20,
+        search_top_k=5,
+        intervention_hub=None,
+        **kwargs
+    ):
         """Initializes the BulletPlanReasoner."""
-        llm_model = model or config.get("llm", {}).get("model", "gpt-4o")
-
-        logger.info(
-            f"Initializing BulletPlanReasoner with model={llm_model}, max_iters={max_iters}, search_top_k={search_top_k}"
+        super().__init__(
+            jentic_client=jentic_client,
+            memory=memory,
+            llm=llm,
+            model=model,
+            max_iterations=max_iters,
+            intervention_hub=intervention_hub,
+            **kwargs
         )
-        super().__init__()
-        self.jentic = jentic
-        self.memory = memory
-        self.llm = llm or LiteLLMChatLLM(model=llm_model)
         self.max_iters = max_iters
         self.search_top_k = search_top_k
-        self.escalation = intervention_hub or NoEscalation()
-        self._last_escalation_question: Optional[str] = None  # Track last question asked to human
-        logger.info("BulletPlanReasoner initialization complete")
+        logger.info(f"BulletPlanReasoner initialized with search_top_k={search_top_k}")
 
-    # ------------------------------------------------------------------
-    # Universal escalation helpers
-    # ------------------------------------------------------------------
 
-    def _process_llm_response_for_escalation(
-        self, response: str, context: str = ""
-    ) -> str:
-        """
-        Check if LLM response contains XML escalation request and handle it.
-
-        Returns:
-            Processed response (either original or human response if escalation occurred)
-        """
-        response = response.strip()
-
-        # Check for XML escalation pattern (same as FreeformReasoner)
-        escalation_pattern = (
-            r'<escalate_to_human\s+reason="([^"]+)"\s+question="([^"]+)"\s*/>'
-        )
-        match = re.search(escalation_pattern, response)
-
-        if match:
-            reason = match.group(1).strip()
-            question = match.group(2).strip()
-            logger.info(f"🤖➡️👤 LLM requested escalation: {reason}")
-            
-            # Store the question for later reference
-            self._last_escalation_question = question
-            
-            if self.escalation.is_available():
-                try:
-                    human_response = self.escalation.ask_human(question, context)
-                    if human_response.strip():
-                        logger.info(f"👤➡️🤖 Human provided response: {human_response}")
-
-                        # Store human guidance in memory for future LLM calls to reference
-                        guidance_key = (
-                            f"human_guidance_{len(self.memory.keys())}"  # Unique key
-                        )
-                        self.memory.set(
-                            key=guidance_key,
-                            value=human_response,
-                            description=f"Human guidance for: {question}",
-                        )
-                        # Also store the latest guidance under a well-known key
-                        self.memory.set(
-                            key="human_guidance_latest",
-                            value=human_response,
-                            description=f"Latest human guidance: {question}",
-                        )
-                        logger.info(f"Stored human guidance in memory: {guidance_key}")
-
-                        return human_response
-                    else:
-                        logger.warning(
-                            "👤 No response from human, continuing with original"
-                        )
-                except Exception as e:
-                    logger.warning(f"Escalation failed: {e}")
-            else:
-                logger.warning("⚠️ Escalation requested but not available")
-
-            # Remove the escalation tag from the response
-            return re.sub(escalation_pattern, "", response).strip()
-
-        return response
-
-    def _request_human_help(self, question: str, context: str = "") -> str:
-        """
-        Direct method for requesting human help from anywhere in the code.
-
-        Returns:
-            Human response or empty string if not available
-        """
-        logger.info(f"🤖➡️👤 Direct escalation request: {question}")
-
-        if self.escalation.is_available():
-            try:
-                response = self.escalation.ask_human(question, context)
-                logger.info("👤➡️🤖 Human response received")
-                return response
-            except Exception as e:
-                logger.warning(f"Direct escalation failed: {e}")
-        else:
-            logger.warning("⚠️ Direct escalation requested but not available")
-
-        return ""
 
     # ------------------------------------------------------------------
     # BaseReasoner hook implementations
@@ -566,6 +451,7 @@ class BulletPlanReasoner(BaseReasoner):
         logger.debug(f"Tool info: {tool_info}")
 
         # 2. Generate and validate parameters
+        # Generate parameters using BulletPlan-specific helper (richer context)
         params = self._generate_and_validate_parameters(resolved_tool_id, tool_info, state)
 
         # 3. Substitute memory placeholders
@@ -574,25 +460,17 @@ class BulletPlanReasoner(BaseReasoner):
 
         # 4. Execute the tool and process the result
         logger.info(f"Executing tool {resolved_tool_id} with selected arguments.")
-        result = self.jentic.execute(resolved_tool_id, concrete_args)
+        result = self.execute_tool_safely(resolved_tool_id, concrete_args)
 
         success = self._determine_tool_execution_success(result)
         logger.info(f"Tool execution completed. Success: {success}")
         return result
 
     def _resolve_tool_id_from_memory(self, tool_id: str) -> str:
-        """If tool_id is a memory key, resolve it to the actual tool UUID."""
-        if tool_id in self.memory.keys():
-            stored = self.memory.retrieve(tool_id)
-            if isinstance(stored, dict) and "id" in stored:
-                resolved_id = stored["id"]
-                logger.info(f"Resolved memory key '{tool_id}' to tool_id: {resolved_id}")
-                return resolved_id
-            else:
-                logger.warning(
-                    f"Memory key '{tool_id}' did not resolve to a valid tool_id. Using as-is."
-                )
-        return tool_id
+        """Resolve placeholders in a stored tool ID reference."""
+        # Detect ${memory.foo} placeholders using shared helper
+        resolved = self.resolve_memory_placeholders({"id": tool_id})
+        return resolved.get("id", tool_id)
 
     def _prepare_param_generation_prompt(self, tool_id: str, tool_info: Dict, state: ReasonerState) -> str:
         """Loads and formats the prompt for generating tool parameters."""
@@ -635,7 +513,7 @@ class BulletPlanReasoner(BaseReasoner):
             )
         
         logger.info(f"Available memory keys for parameter filling: {available_memory_keys}")
-        return self._add_human_guidance_to_prompt(prompt)
+        return self.add_human_guidance_to_prompt(prompt)
 
     def _validate_llm_params(
         self, args_json: str, required_fields: List[str]
@@ -700,16 +578,8 @@ class BulletPlanReasoner(BaseReasoner):
         )
 
     def _determine_tool_execution_success(self, result: Any) -> bool:
-        """Checks the result of a tool execution and returns a boolean for success."""
-        if isinstance(result, dict):
-            inner = result.get("result")
-            if hasattr(inner, "success"):
-                return getattr(inner, "success", False)
-            elif isinstance(inner, dict):
-                return inner.get("success", False)
-        elif hasattr(result, "success"):
-            return getattr(result, "success", False)
-        return False # Default to failure if success cannot be determined
+        """Leverage shared helper from BaseReasoner."""
+        return self.is_tool_result_successful(result)
 
     # 4. OBSERVE --------------------------------------------------------
     def observe(self, observation: Any, state: ReasonerState):
@@ -859,12 +729,12 @@ class BulletPlanReasoner(BaseReasoner):
 
         logger.info("Calling LLM for reflection")
         # Add human guidance context if available
-        context_aware_prompt = self._add_human_guidance_to_prompt(prompt)
+        context_aware_prompt = self.add_human_guidance_to_prompt(prompt)
         revised_step = self.safe_llm_call(messages=[{"role": "user", "content": context_aware_prompt}]).strip()
 
         # Process for escalation during reflection
         context = f"Step: {current_step.text}\nPhase: Reflection\nError: {err_msg}\nGoal: {state.goal}"
-        processed_step = self._process_llm_response_for_escalation(
+        processed_step = self.process_llm_response_for_escalation(
             revised_step, context
         )
 
@@ -1002,13 +872,13 @@ class BulletPlanReasoner(BaseReasoner):
 
         try:
             # Add human guidance context if available
-            context_aware_reasoning_prompt = self._add_human_guidance_to_prompt(reasoning_prompt)
+            context_aware_reasoning_prompt = self.add_human_guidance_to_prompt(reasoning_prompt)
             reply = self.safe_llm_call(messages=[{"role": "user", "content": context_aware_reasoning_prompt}]).strip()
             logger.debug("Reasoning LLM reply: %s", reply)
 
             # Process for escalation
             context = f"Step: {step.text}\nPhase: Reasoning\nGoal: {state.goal}"
-            processed_reply = self._process_llm_response_for_escalation(reply, context)
+            processed_reply = self.process_llm_response_for_escalation(reply, context)
 
             if processed_reply != reply:
                 # Human provided guidance, use it as the reasoning result
@@ -1204,10 +1074,8 @@ class BulletPlanReasoner(BaseReasoner):
             logger.info(
                 f"\n✅ Goal Completed Successfully\n{final_answer}\n{tool_summary}"
             )
-        result = ReasoningResult(
+        result = self.create_reasoning_result(
             final_answer=final_answer,
-            iterations=len(tool_calls),
-            tool_calls=tool_calls,
             success=state.goal_completed,
             error_message=(
                 None
@@ -1277,7 +1145,7 @@ Your choice:"""
             context = (
                 f"Goal: {state.goal}\nIteration: {iteration}\nPhase: Proactive Check"
             )
-            processed_response = self._process_llm_response_for_escalation(
+            processed_response = self.process_llm_response_for_escalation(
                 response, context
             )
 
@@ -1301,19 +1169,3 @@ Your choice:"""
 
         return False
 
-    # ------------------------------------------------------------------
-    # Human guidance integration helpers
-    # ------------------------------------------------------------------
-
-    def _add_human_guidance_to_prompt(self, base_prompt: str) -> str:
-        """Add recent human guidance from memory to prompts."""
-        try:
-            # Get latest human guidance from memory
-            latest_guidance = self.memory.retrieve("human_guidance_latest")
-            if latest_guidance and latest_guidance.strip():
-                guidance_section = f"\n\nRECENT HUMAN GUIDANCE: {latest_guidance}\n"
-                return base_prompt + guidance_section
-        except KeyError:
-            # No human guidance in memory yet
-            pass
-        return base_prompt
