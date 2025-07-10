@@ -167,3 +167,25 @@ STEP_CLASSIFICATION_PROMPT: str = (
     Existing memory keys: {keys_list}
     """
 )
+
+JSON_CORRECTION_PROMPT: str = (
+    """Your previous response was not valid JSON. Please correct it.
+
+    STRICT RULES:
+    1.  Your reply MUST be a single, raw, valid JSON object.
+    2.  Do NOT include any explanation, markdown, or code fences.
+    3.  Do NOT change the data, only fix the syntax.
+
+    Original Prompt:
+    ---
+    {original_prompt}
+    ---
+
+    Faulty JSON Response:
+    ---
+    {bad_json}
+    ---
+
+    Corrected JSON Response:
+    """
+)
