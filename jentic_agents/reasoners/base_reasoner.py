@@ -7,9 +7,7 @@ from typing import Any, Dict, List, Optional
 from pydantic import BaseModel
 import enum
 import re
-import logging
 import json
-from textwrap import dedent
 import os
 
 from ..platform.jentic_client import JenticClient

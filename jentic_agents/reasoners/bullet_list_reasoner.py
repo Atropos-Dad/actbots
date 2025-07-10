@@ -910,7 +910,6 @@ class BulletPlanReasoner(BaseReasoner):
             f"Reasoning started for goal: {goal} | Max iterations: {max_iterations}"
         )
 
-        from .base_reasoner import ReasoningResult  # local import to avoid circular
 
         state = self._init_state(goal, {})
         tool_calls: List[Dict[str, Any]] = []

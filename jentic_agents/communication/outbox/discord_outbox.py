@@ -108,7 +108,7 @@ class DiscordOutbox(BaseOutbox):
         """Send progress update to Discord channel."""
         async def _send():
             if self.use_embeds:
-                title = f"🔄 Progress Update"
+                title = " Progress Update"
                 description = f"**Goal:** {goal_id}\n**Status:** {message}"
                 if step:
                     description += f"\n**Step:** {step}"

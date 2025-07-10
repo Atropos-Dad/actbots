@@ -152,9 +152,6 @@ def time_operation(
             # Your code here
             pass
     """
-    callback = None
-    if collect_stats:
-        callback = lambda n, d: _timer_stats.record(n, d)
 
     timer = Timer(name, logger_name)
 
