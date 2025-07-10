@@ -1,4 +1,4 @@
-"""Central location for JenticReasoner prompt templates.
+"""Central location for ReWOOReasoner prompt templates.
 
 These prompts are intentionally kept minimal at this stage. They will be
 iterated as we refine the reasoner's capabilities.

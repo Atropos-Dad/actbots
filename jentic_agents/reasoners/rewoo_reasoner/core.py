@@ -48,7 +48,7 @@ class ReWOOReasoner(BaseReWOOReasoner):
             inputs = self._fetch_inputs(step)
         except MissingInputError as exc:
             self._reflect_on_failure(exc, step, state)
-            return {}
+            return None
 
         if step.step_type == Step.StepType.REASONING:
             result = self._execute_reasoning_step(step, inputs)

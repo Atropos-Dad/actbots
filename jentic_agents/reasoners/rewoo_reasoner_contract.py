@@ -1,11 +1,6 @@
 """Abstract **plan-first** reasoner contract.
 
-This second-generation base class formalises the successful architecture used
-by *JenticReasoner*: an upfront planning phase followed by iterative execution
-with optional self-reflection.
-
-Sub-classes implement four hook methods while the shared `run()` loop handles
-orchestration, tracing, and stop-conditions.
+This base class formalises a plan-first, iterative execution architecture with optional self-reflection on failure.
 """
 from __future__ import annotations
 
@@ -34,10 +29,6 @@ class BaseReWOOReasoner(ABC):
       • :pymeth:`_synthesize_final_answer` – build the human-readable answer
     """
 
-    # ---------------------------------------------------------------------
-    # Lifecycle
-    # ---------------------------------------------------------------------
-
     def __init__(
         self,
         *,
@@ -50,14 +41,12 @@ class BaseReWOOReasoner(ABC):
         self._llm = llm
         self._logger = get_logger(self.__class__.__name__)
 
-    # ------------------------------------------------------------------
     # Public API
-    # ------------------------------------------------------------------
 
     def run(self, goal: str, max_iterations: int = 20) -> ReasoningResult:  # noqa: D401
         """Execute the reasoning loop until completion or iteration cap.
 
-        Returns a lightweight dict with summary metadata.  Sub-classes may
+        Returns a lightweight dict with summary metadata. Sub-classes may
         extend/replace this with a richer model if desired.
         """
         log = self._logger
@@ -70,7 +59,6 @@ class BaseReWOOReasoner(ABC):
             raise RuntimeError("Planner produced an empty plan")
         log.info("Plan generated with %d steps", len(state.plan))
 
-        # Runtime bookkeeping
         tool_calls: List[Dict[str, Any]] = []
         iteration = 0
 
@@ -108,9 +96,7 @@ class BaseReWOOReasoner(ABC):
             success=success,
         )
 
-    # ------------------------------------------------------------------
     # Sub-class hooks
-    # ------------------------------------------------------------------
 
     @abstractmethod
     def _generate_plan(self, state: ReasonerState) -> None:  # pragma: no cover
