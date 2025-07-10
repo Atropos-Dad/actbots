@@ -52,7 +52,7 @@ class SimpleUIAgent(BaseAgent):
             self.font_body = font.Font(family="Segoe UI", size=14)
             self.font_small = font.Font(family="Segoe UI", size=12)
             self.font_mono = font.Font(family="Consolas", size=11)
-        except:
+        except tk.TclError:
             self.font_title = font.Font(family="Arial", size=20, weight="bold")
             self.font_body = font.Font(family="Arial", size=14)
             self.font_small = font.Font(family="Arial", size=12)

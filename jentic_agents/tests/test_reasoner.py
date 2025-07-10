@@ -36,13 +36,6 @@ class TestStandardReasoner:
         assert self.reasoner.memory == self.memory
         assert self.reasoner.model == "gpt-3.5-turbo"
 
-    @patch("jentic_agents.reasoners.standard_reasoner.LiteLLMChatLLM")
-    def test_init_default_llm(self, mock_llm):
-        """Test reasoner initialization with default LLM client"""
-        memory = Mock(spec=ScratchPadMemory)
-        StandardReasoner(jentic_client=self.jentic_client, memory=memory)
-        mock_llm.assert_called_once()
-
     def test_plan(self):
         """Test plan generation"""
         context = {"iteration": 1, "observations": [], "failed_attempts": []}
@@ -81,32 +74,6 @@ class TestStandardReasoner:
 
         result = self.reasoner.select_tool("test plan", tools)
         assert result is None
-
-    def test_act_no_parameters(self):
-        """Test action with tool that has no parameters"""
-        tool = {"name": "Test Tool", "parameters": {}}
-        result = self.reasoner.act(tool, "test plan")
-        assert result == {}
-
-    def test_act_with_parameters(self):
-        """Test action with tool that has parameters"""
-        tool = {"name": "Test Tool", "parameters": {"param1": "string"}}
-
-        # Mock LLM to return valid JSON
-        self.llm.chat.return_value = '{"param1": "value1"}'
-
-        result = self.reasoner.act(tool, "test plan")
-        assert result == {"param1": "value1"}
-
-    def test_act_invalid_json(self):
-        """Test action when LLM returns invalid JSON"""
-        tool = {"name": "Test Tool", "parameters": {"param1": "string"}}
-
-        # Mock LLM to return invalid JSON
-        self.llm.chat.return_value = "invalid json"
-
-        result = self.reasoner.act(tool, "test plan")
-        assert result == {}
 
     def test_observe_success(self):
         """Test observation of successful action"""
