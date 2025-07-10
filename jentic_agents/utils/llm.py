@@ -3,9 +3,11 @@
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
-from typing import List, Dict
+from typing import List, Dict, Optional
 import asyncio
 import concurrent.futures
+import time
+import logging
 from .config import get_config_value
 
 
@@ -33,6 +35,7 @@ class LiteLLMChatLLM(BaseLLM):
         model: str | None = None,
         temperature: float = 0.2,
         max_tokens: int | None = None,
+        enable_telemetry: bool = True,
     ) -> None:
         import litellm
 
@@ -42,14 +45,91 @@ class LiteLLMChatLLM(BaseLLM):
         self.model = model
         self.temperature = temperature
         self.max_tokens = max_tokens
+        self.enable_telemetry = enable_telemetry
         self._client = litellm
+        self._logger = logging.getLogger(__name__)
+        
+        # Initialize telemetry tracking
+        self._total_calls = 0
+        self._total_cost = 0.0
+        self._total_tokens = 0
 
     def chat(self, messages: List[Dict[str, str]], **kwargs) -> str:
-        resp = self._client.completion(
-            model=self.model,
-            messages=messages,
-            temperature=kwargs.get("temperature", self.temperature),
-            max_tokens=kwargs.get("max_tokens", self.max_tokens),
+        start_time = time.time()
+        
+        try:
+            resp = self._client.completion(
+                model=self.model,
+                messages=messages,
+                temperature=kwargs.get("temperature", self.temperature),
+                max_tokens=kwargs.get("max_tokens", self.max_tokens),
+            )
+            
+            content = resp.choices[0].message.content or ""
+            
+            # Track telemetry
+            if self.enable_telemetry:
+                self._track_completion(resp, start_time, messages)
+            
+            return content
+            
+        except Exception as e:
+            if self.enable_telemetry:
+                self._track_error(e, start_time, messages)
+            raise
+
+    def _track_completion(self, response, start_time: float, messages: List[Dict[str, str]]):
+        """Track successful completion telemetry."""
+        end_time = time.time()
+        duration = end_time - start_time
+        
+        # Extract token usage
+        usage = getattr(response, 'usage', None)
+        prompt_tokens = getattr(usage, 'prompt_tokens', 0) if usage else 0
+        completion_tokens = getattr(usage, 'completion_tokens', 0) if usage else 0
+        total_tokens = getattr(usage, 'total_tokens', 0) if usage else 0
+        
+        # Calculate cost if available
+        cost = 0.0
+        if hasattr(response, '_hidden_params') and 'response_cost' in response._hidden_params:
+            cost = response._hidden_params['response_cost']
+        
+        # Update counters
+        self._total_calls += 1
+        self._total_cost += cost
+        self._total_tokens += total_tokens
+        
+        # Log telemetry
+        self._logger.info(
+            f"LLM Call - Model: {self.model}, Duration: {duration:.3f}s, "
+            f"Tokens: {total_tokens} (prompt: {prompt_tokens}, completion: {completion_tokens}), "
+            f"Cost: ${cost:.6f}, Total Calls: {self._total_calls}, Total Cost: ${self._total_cost:.6f}"
         )
-        content = resp.choices[0].message.content
-        return content or ""
+
+    def _track_error(self, error: Exception, start_time: float, messages: List[Dict[str, str]]):
+        """Track failed completion telemetry."""
+        end_time = time.time()
+        duration = end_time - start_time
+        
+        self._total_calls += 1
+        
+        self._logger.error(
+            f"LLM Call Failed - Model: {self.model}, Duration: {duration:.3f}s, "
+            f"Error: {str(error)}, Total Calls: {self._total_calls}"
+        )
+
+    def get_telemetry_stats(self) -> Dict[str, float]:
+        """Get current telemetry statistics."""
+        return {
+            "total_calls": self._total_calls,
+            "total_cost": self._total_cost,
+            "total_tokens": self._total_tokens,
+            "average_cost_per_call": self._total_cost / max(self._total_calls, 1),
+            "average_tokens_per_call": self._total_tokens / max(self._total_calls, 1),
+        }
+
+    def reset_telemetry(self):
+        """Reset telemetry counters."""
+        self._total_calls = 0
+        self._total_cost = 0.0
+        self._total_tokens = 0
