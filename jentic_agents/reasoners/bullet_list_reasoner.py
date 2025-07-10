@@ -38,7 +38,6 @@ import json
 import re
 from collections import deque
 from dataclasses import dataclass, field
-from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 # local utils
@@ -235,6 +234,13 @@ class BulletPlanReasoner(BaseReasoner):
         """
         if not hits:
             return None
+
+        # Try shared helper first (simple numeric list)
+        auto_choice = self.choose_tool_with_llm(step.text, hits)
+        if auto_choice is not None:
+            return auto_choice["id"]
+
+        # Fallback to advanced heuristics below
 
         # Build numbered candidate list
         numbered_lines: List[str] = []
@@ -450,6 +456,7 @@ class BulletPlanReasoner(BaseReasoner):
         logger.debug(f"Tool info: {tool_info}")
 
         # 2. Generate and validate parameters
+        # Generate parameters using BulletPlan-specific helper (richer context)
         params = self._generate_and_validate_parameters(resolved_tool_id, tool_info, state)
 
         # 3. Substitute memory placeholders
@@ -465,18 +472,10 @@ class BulletPlanReasoner(BaseReasoner):
         return result
 
     def _resolve_tool_id_from_memory(self, tool_id: str) -> str:
-        """If tool_id is a memory key, resolve it to the actual tool UUID."""
-        if tool_id in self.memory.keys():
-            stored = self.memory.retrieve(tool_id)
-            if isinstance(stored, dict) and "id" in stored:
-                resolved_id = stored["id"]
-                logger.info(f"Resolved memory key '{tool_id}' to tool_id: {resolved_id}")
-                return resolved_id
-            else:
-                logger.warning(
-                    f"Memory key '{tool_id}' did not resolve to a valid tool_id. Using as-is."
-                )
-        return tool_id
+        """Resolve placeholders in a stored tool ID reference."""
+        # Detect ${memory.foo} placeholders using shared helper
+        resolved = self.resolve_memory_placeholders({"id": tool_id})
+        return resolved.get("id", tool_id)
 
     def _prepare_param_generation_prompt(self, tool_id: str, tool_info: Dict, state: ReasonerState) -> str:
         """Loads and formats the prompt for generating tool parameters."""
@@ -584,16 +583,8 @@ class BulletPlanReasoner(BaseReasoner):
         )
 
     def _determine_tool_execution_success(self, result: Any) -> bool:
-        """Checks the result of a tool execution and returns a boolean for success."""
-        if isinstance(result, dict):
-            inner = result.get("result")
-            if hasattr(inner, "success"):
-                return getattr(inner, "success", False)
-            elif isinstance(inner, dict):
-                return inner.get("success", False)
-        elif hasattr(result, "success"):
-            return getattr(result, "success", False)
-        return False # Default to failure if success cannot be determined
+        """Leverage shared helper from BaseReasoner."""
+        return self.is_tool_result_successful(result)
 
     # 4. OBSERVE --------------------------------------------------------
     def observe(self, observation: Any, state: ReasonerState):

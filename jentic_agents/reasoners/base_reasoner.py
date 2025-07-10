@@ -8,6 +8,8 @@ from pydantic import BaseModel
 import enum
 import re
 import logging
+import json
+from textwrap import dedent
 
 from ..platform.jentic_client import JenticClient
 from ..memory.base_memory import BaseMemory
@@ -339,3 +341,229 @@ class BaseReasoner(ABC):
         self.tool_calls.clear()
         self.iteration_count = 0
         logger.debug("Reasoner state reset")
+
+    # ========================================================================
+    # NEW SHARED HIGH-LEVEL HELPERS (deduplicated from concrete reasoners)
+    # ========================================================================
+
+    # ---- PARAMETER GENERATION ------------------------------------------------
+    def _default_param_prompt(self, tool: Dict[str, Any], plan_context: str) -> str:
+        """Return a generic prompt asking the LLM to generate JSON parameters for *tool*.
+        Subclasses can override if they need a custom wording.
+        """
+        # Pretty-print the parameter schema for the prompt
+        parameters_block = json.dumps(tool.get("parameters", {}), indent=2, ensure_ascii=False)
+        tool_name = tool.get("name", tool.get("id", "unknown tool"))
+        tool_desc = tool.get("description", "")
+        return dedent(
+            f"""
+            You are an action-parameter generator. Given a tool specification and the current plan step,
+            produce a single JSON object containing arguments for the tool call – **no extra keys**.
+
+            Tool: {tool_name}
+            Description: {tool_desc}
+            Parameter schema (for reference):
+            {parameters_block}
+
+            Current plan step / context:
+            {plan_context}
+
+            Respond **only** with a JSON object.
+            """
+        ).strip()
+
+    def generate_and_validate_parameters(
+        self,
+        tool: Dict[str, Any],
+        plan_context: str,
+        *,
+        max_attempts: int = 3,
+    ) -> Dict[str, Any]:
+        """Generic helper that loops LLM → JSON parse → placeholder validation.
+        Returns parameters dict or raises *RuntimeError* after *max_attempts*.
+        """
+        required_fields: List[str] = tool.get("required", [])
+        prompt = self._default_param_prompt(tool, plan_context)
+        last_error: Optional[str] = None
+
+        for attempt in range(1, max_attempts + 1):
+            logger.info(f"Parameter-generation attempt {attempt}/{max_attempts} for tool '{tool.get('id')}'")
+            response = self.safe_llm_call([
+                {"role": "user", "content": prompt}
+            ], max_tokens=400, temperature=0.3)
+
+            try:
+                args = json.loads(response.strip())
+            except json.JSONDecodeError as e:
+                last_error = f"Invalid JSON: {e}"
+                logger.warning(last_error)
+                # Minimal correction hint
+                prompt = (
+                    f"ERROR: Your previous output was not valid JSON. Please output only a JSON object.\n\n"
+                    f"{self._default_param_prompt(tool, plan_context)}"
+                )
+                continue
+
+            # Check required fields
+            missing = [f for f in required_fields if f not in args]
+            if missing:
+                last_error = f"Missing required fields: {missing}"
+                logger.warning(last_error)
+                prompt = (
+                    f"ERROR: You omitted required fields {', '.join(missing)}. Please regenerate **all** parameters.\n\n"
+                    f"{self._default_param_prompt(tool, plan_context)}"
+                )
+                continue
+
+            # Validate memory placeholders if the memory backend supports it
+            if hasattr(self.memory, "validate_placeholders"):
+                error_msg, correction_prompt = self.memory.validate_placeholders(args, required_fields)  # type: ignore[arg-type]
+                if error_msg:
+                    last_error = error_msg
+                    logger.warning(error_msg)
+                    prompt = correction_prompt or prompt  # type: ignore[assignment]
+                    continue
+
+            # All good
+            return args
+
+        raise RuntimeError(
+            f"Parameter generation failed after {max_attempts} attempts for tool '{tool.get('id')}'. Last error: {last_error}"
+        )
+
+    # ---- TOOL SELECTION WITH LLM --------------------------------------------
+    def choose_tool_with_llm(
+        self,
+        plan_description: str,
+        available_tools: List[Dict[str, Any]],
+    ) -> Optional[Dict[str, Any]]:
+        """Generic numeric-list based tool choice. Returns selected tool dict or None."""
+        if not available_tools:
+            return None
+        if len(available_tools) == 1:
+            return available_tools[0]
+
+        tool_descriptions = "\n".join(
+            [f"- {tool['id']}: {tool.get('name', '')} - {tool.get('description', '')}" for tool in available_tools]
+        )
+
+        prompt = dedent(
+            f"""
+            You are a tool-selection assistant. Given a plan step and a list of available tools, choose the most appropriate tool **ID**.
+            Reply with one of the IDs exactly, or the word NONE if no tool fits.
+
+            Plan step:
+            {plan_description}
+
+            Available tools:
+            {tool_descriptions}
+            """
+        ).strip()
+
+        response = self.safe_llm_call([
+            {"role": "user", "content": prompt}
+        ], max_tokens=30, temperature=0.0)
+
+        selected_id = (response or "").strip()
+        logger.info(f"LLM tool-selection response: '{selected_id}'")
+
+        if selected_id.upper() == "NONE" or selected_id == "":
+            return None if selected_id.upper() == "NONE" else available_tools[0]
+
+        for tool in available_tools:
+            if tool["id"] == selected_id:
+                return tool
+        logger.warning(f"No tool matched id '{selected_id}', returning first candidate as fallback")
+        return available_tools[0]
+
+    # ---- FINAL ANSWER SYNTHESIS ---------------------------------------------
+    def generate_final_answer(self, goal: str, observations: List[str]) -> str:
+        """Utility to turn a list of observations into a concise final answer."""
+        prompt = dedent(
+            f"""
+            You are a summarisation assistant. Given the original goal and a list of observations / results, craft a clear, concise final answer.
+
+            Goal:
+            {goal}
+
+            Observations:
+            {'\n'.join('- ' + o for o in observations)}
+
+            Provide the final answer only, no extra commentary.
+            """
+        ).strip()
+        response = self.safe_llm_call([
+            {"role": "user", "content": prompt}
+        ], max_tokens=300, temperature=0.5)
+        return response.strip()
+
+    # ---- GOAL EVALUATION & REFLECTION ---------------------------------------
+    def llm_goal_evaluation(self, goal: str, observations: List[str]) -> bool:
+        """Ask the LLM if the goal is achieved based on observations. Returns bool."""
+        if not observations:
+            return False
+
+        prompt = dedent(
+            f"""
+            You are an evaluation assistant. Decide whether the following goal has been fully achieved based on the observations.
+
+            Goal:
+            {goal}
+
+            Observations:
+            {'\n'.join('- ' + o for o in observations)}
+
+            Reply with YES if achieved, otherwise NO. No other words.
+            """
+        ).strip()
+
+        response = self.safe_llm_call([
+            {"role": "user", "content": prompt}
+        ], max_tokens=5, temperature=0.1)
+
+        return response.strip().upper() == "YES"
+
+    def llm_reflect(self, goal: str, observations: List[str], failed_attempts: List[str]) -> str:
+        """Shared reflection prompt to suggest improvements after failures."""
+        prompt = dedent(
+            f"""
+            You are a reflection assistant. The goal has not been achieved yet. Analyse the situation and propose improved next steps.
+
+            Goal:
+            {goal}
+
+            Observations so far:
+            {'\n'.join('- ' + o for o in observations) if observations else '(none)'}
+
+            Failed attempts:
+            {'\n'.join('- ' + a for a in failed_attempts) if failed_attempts else '(none)'}
+
+            Provide insights or revised plan succinctly.
+            """
+        ).strip()
+
+        response = self.safe_llm_call([
+            {"role": "user", "content": prompt}
+        ], max_tokens=200, temperature=0.7)
+        return response.strip()
+
+    # ---- RESULT HELPERS ------------------------------------------------------
+    @staticmethod
+    def is_tool_result_successful(result: Any) -> bool:
+        """Duck-type check used by several reasoners."""
+        if isinstance(result, dict):
+            inner = result.get("result", result)
+            if isinstance(inner, dict):
+                return inner.get("success", False)
+            return bool(inner)
+        return getattr(result, "success", False)
+
+    # ---- MEMORY PLACEHOLDER RESOLUTION --------------------------------------
+    def resolve_memory_placeholders(self, args: Dict[str, Any]) -> Dict[str, Any]:
+        """Convenience wrapper with logging for memory placeholder resolution."""
+        try:
+            resolved = self.memory.resolve_placeholders(args)
+            return resolved  # type: ignore[return-value]
+        except Exception as e:
+            logger.warning(f"Failed to resolve memory placeholders: {e}")
+            return args

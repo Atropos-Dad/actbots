@@ -284,7 +284,7 @@ IMPORTANT:
         messages = self._manage_context_length(state.messages)
 
         try:
-            response = self.llm.chat(messages=messages)
+            response = self.safe_llm_call(messages=messages)
             logger.debug(f"Raw LLM response: {response}")
             return response.strip()
         except Exception as e:
@@ -593,11 +593,20 @@ IMPORTANT:
             return self._handle_tool_search(args, state)
 
         try:
-            # Resolve memory placeholders in arguments
-            resolved_args = self.memory.resolve_placeholders(args)
+            # Resolve memory placeholders in arguments using shared helper
+            resolved_args = self.resolve_memory_placeholders(args)
 
             # Execute the tool using base class method
             result = self.execute_tool_safely(tool_id, resolved_args)
+
+            # Record the tool call for completion tracking & history
+            call_record = {
+                "tool_id": tool_id,
+                "args": resolved_args,
+                "result": result,
+                "iteration": state.iteration_count,
+            }
+            state.tool_calls.append(call_record)
 
             return {"tool_id": tool_id, "result": result, "success": True}
 

@@ -2,13 +2,13 @@
 Standard reasoning implementation using ReAct pattern with Jentic SDK integration.
 """
 
-import logging
 from typing import Any, Dict, List, Optional
 import json
 
 from .base_reasoner import BaseReasoner, ReasoningResult
+from ..utils.logger import get_logger
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 
 class StandardReasoner(BaseReasoner):
@@ -162,101 +162,12 @@ What should be the next step in the plan to achieve this goal?""",
     def select_tool(
         self, plan: str, available_tools: List[Dict[str, Any]]
     ) -> Optional[Dict[str, Any]]:
-        """Select the most appropriate tool for executing the current plan."""
-        if not available_tools:
-            return None
-
-        if len(available_tools) == 1:
-            return available_tools[0]
-
-        tool_descriptions = "\n".join(
-            [
-                f"- {tool['id']}: {tool['name']} - {tool.get('description', '')}"
-                for tool in available_tools
-            ]
-        )
-
-        messages = [
-            {
-                "role": "system",
-                "content": """You are a tool selection assistant. Given a plan and available tools, 
-                select the most appropriate tool or respond with 'NONE' if no tool is suitable.""",
-            },
-            {
-                "role": "user",
-                "content": f"""Plan: {plan}
-
-Available tools:
-{tool_descriptions}
-
-Which tool ID should be used, or 'NONE' if no tool is needed?
-Respond with just the tool ID or 'NONE'.""",
-            },
-        ]
-
-        response = self.safe_llm_call(
-            messages=messages, max_tokens=50, temperature=0.0  # deterministic selection
-        )
-
-        selected_id = (response or "").strip()
-        logger.info(f"LLM tool selection response: '{selected_id}'")
-
-        # If model explicit says NONE
-        if selected_id.upper() == "NONE":
-            return None
-
-        # Fallback: if model returns empty string, use first candidate
-        if selected_id == "":
-            logger.warning(
-                "LLM returned empty tool id – defaulting to first available tool"
-            )
-            return available_tools[0]
-
-        # Find the selected tool
-        for tool in available_tools:
-            if tool["id"] == selected_id:
-                logger.info(f"Found matching tool: {tool['id']}")
-                return tool
-
-        # If no exact match found, return None (don't fallback)
-        logger.warning(f"No tool found matching ID: '{selected_id}'")
-        return None
+        """Delegate to shared helper in BaseReasoner."""
+        return self.choose_tool_with_llm(plan, available_tools)
 
     def act(self, tool: Dict[str, Any], plan: str) -> Dict[str, Any]:
-        """Execute an action using the selected tool."""
-        tool_params = tool.get("parameters", {})
-
-        if not tool_params:
-            return {}
-
-        messages = [
-            {
-                "role": "system",
-                "content": f"""You are an action parameter generator. Given a tool and plan, 
-                generate appropriate parameters for the tool. 
-                
-Tool: {tool['name']}
-Description: {tool.get('description', '')}
-Parameters: {json.dumps(tool_params, indent=2)}
-
-Respond with a JSON object containing the parameter values.""",
-            },
-            {
-                "role": "user",
-                "content": f"""Plan: {plan}
-
-Generate parameters for this tool as a JSON object.""",
-            },
-        ]
-
-        response = self.safe_llm_call(messages=messages, max_tokens=200, temperature=0.3)
-
-        try:
-            params = json.loads(response.strip())
-            return params
-        except json.JSONDecodeError:
-            logger.warning("Failed to parse action parameters, using empty dict")
-            return {}
+        """Generate parameters for the *tool* using shared helper."""
+        return self.generate_and_validate_parameters(tool, plan)
 
     def observe(self, action_result: Dict[str, Any]) -> str:
         """Process and interpret the result of an action."""
@@ -267,77 +178,15 @@ Generate parameters for this tool as a JSON object.""",
 
     def evaluate(self, goal: str, observations: List[str]) -> bool:
         """Evaluate whether the goal has been achieved based on observations."""
-        if not observations:
-            return False
-
-        messages = [
-            {
-                "role": "system",
-                "content": """You are an evaluation assistant. Determine if a goal has been achieved 
-                based on the observations. Respond with 'YES' if achieved, 'NO' if not.""",
-            },
-            {
-                "role": "user",
-                "content": f"""Goal: {goal}
-
-Observations:
-{chr(10).join(f"- {obs}" for obs in observations)}
-
-Has the goal been achieved? Respond with YES or NO only.""",
-            },
-        ]
-
-        response = self.safe_llm_call(messages=messages, max_tokens=10, temperature=0.1)
-
-        return response.strip().upper() == "YES"
+        # Delegate to shared helper in BaseReasoner
+        return self.llm_goal_evaluation(goal, observations)
 
     def reflect(
         self, goal: str, observations: List[str], failed_attempts: List[str]
     ) -> str:
         """Reflect on failures and generate improved strategies."""
-        messages = [
-            {
-                "role": "system",
-                "content": """You are a reflection assistant. Analyze failures and suggest improvements 
-                for achieving the goal.""",
-            },
-            {
-                "role": "user",
-                "content": f"""Goal: {goal}
-
-Observations so far:
-{chr(10).join(f"- {obs}" for obs in observations)}
-
-Failed attempts:
-{chr(10).join(f"- {attempt}" for attempt in failed_attempts)}
-
-What insights can help improve the approach?""",
-            },
-        ]
-
-        response = self.safe_llm_call(messages=messages, max_tokens=200, temperature=0.7)
-
-        return response.strip()
+        return self.llm_reflect(goal, observations, failed_attempts)
 
     def _generate_final_answer(self, goal: str, observations: List[str]) -> str:
-        """Generate final answer based on goal and observations."""
-        messages = [
-            {
-                "role": "system",
-                "content": """You are a final answer generator. Based on the goal and observations, 
-                provide a clear, comprehensive answer.""",
-            },
-            {
-                "role": "user",
-                "content": f"""Goal: {goal}
-
-Observations:
-{chr(10).join(f"- {obs}" for obs in observations)}
-
-Provide a final answer to the goal based on these observations.""",
-            },
-        ]
-
-        response = self.safe_llm_call(messages=messages, max_tokens=300, temperature=0.5)
-
-        return response.strip()
+        """Use shared synthesis helper."""
+        return self.generate_final_answer(goal, observations)
