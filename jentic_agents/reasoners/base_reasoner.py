@@ -263,34 +263,13 @@ class BaseReasoner(ABC):
         """
         Universal result creation pattern used by all reasoners.
         """
-        # Get telemetry stats before creating result
-        telemetry_stats = {}
-        if hasattr(self.llm, 'get_telemetry_stats'):
-            telemetry_stats = self.llm.get_telemetry_stats()
-        
-        result = ReasoningResult(
+        return ReasoningResult(
             final_answer=final_answer,
             iterations=self.iteration_count,
             tool_calls=self.tool_calls,
             success=success,
             error_message=error_message
         )
-        
-        # Log completion telemetry
-        total_cost = telemetry_stats.get('total_cost', 0)
-        total_tokens = telemetry_stats.get('total_tokens', 0)
-        total_calls = telemetry_stats.get('total_calls', 0)
-        
-        logger.info(
-            f"🎯 Goal Completion - Success: {success}, "
-            f"Iterations: {self.iteration_count}, "
-            f"Tool calls: {len(self.tool_calls)}, "
-            f"LLM calls: {total_calls}, "
-            f"Total cost: ${total_cost:.6f}, "
-            f"Total tokens: {total_tokens}"
-        )
-        
-        return result
     
     def process_llm_response_for_escalation(self, response: str, context: str = "") -> str:
         """
