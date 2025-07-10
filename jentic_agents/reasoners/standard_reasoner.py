@@ -2,15 +2,15 @@
 Standard reasoning implementation using ReAct pattern with Jentic SDK integration.
 """
 
+import logging
 from typing import Any, Dict, List, Optional
 import json
 
 from .base_reasoner import BaseReasoner, ReasoningResult
 from ..utils.llm import BaseLLM, LiteLLMChatLLM
 from ..memory.base_memory import BaseMemory
-from ..utils.logger import get_logger
 
-logger = get_logger(__name__)
+logger = logging.getLogger(__name__)
 
 
 class StandardReasoner(BaseReasoner):
@@ -22,28 +22,28 @@ class StandardReasoner(BaseReasoner):
 
     def __init__(
         self,
-        jentic_client: JenticClient,
+        jentic_client: "JenticClient",
         memory: BaseMemory,
         llm: Optional[BaseLLM] = None,
         model: str = "gpt-4",
         max_tool_calls_per_iteration: int = 3,
-        **kwargs
     ):
         """
         Initialize the standard reasoner.
 
         Args:
             jentic_client: Client for Jentic platform operations
+            memory: Memory system for the agent
             llm: LLM client for LLM calls (if None, creates default)
             model: OpenAI model to use for reasoning
             max_tool_calls_per_iteration: Max tool calls per reasoning iteration
-            **kwargs: Additional arguments passed to base class
         """
+        from ..platform.jentic_client import JenticClient
+
         self.jentic_client = jentic_client
         self.memory = memory
         self.llm = llm or LiteLLMChatLLM(model=model)
         self.model = model
-        super().__init__(jentic_client, memory, llm, model, **kwargs)
         self.max_tool_calls_per_iteration = max_tool_calls_per_iteration
 
     def run(self, goal: str, max_iterations: int = 10) -> ReasoningResult:
@@ -55,10 +55,8 @@ class StandardReasoner(BaseReasoner):
         )
 
         observations: List[str] = []
+        tool_calls: List[Dict[str, Any]] = []
         failed_attempts: List[str] = []
-        
-        # Reset state for fresh run
-        self.reset_state()
 
         for iteration in range(max_iterations):
             logger.info(f"Iteration {iteration + 1}/{max_iterations}")
@@ -71,7 +69,7 @@ class StandardReasoner(BaseReasoner):
                     "iteration": self.iteration_count,
                     "observations": observations,
                     "failed_attempts": failed_attempts,
-                    "tool_calls": self.tool_calls,
+                    "tool_calls": tool_calls,
                 }
 
                 # Plan
@@ -81,7 +79,12 @@ class StandardReasoner(BaseReasoner):
                 # Check if we can already answer (only if we have observations)
                 if observations and self.evaluate(goal, observations):
                     final_answer = self._generate_final_answer(goal, observations)
-                    return self.create_reasoning_result(final_answer, True)
+                    return ReasoningResult(
+                        final_answer=final_answer,
+                        iterations=iteration + 1,
+                        tool_calls=tool_calls,
+                        success=True,
+                    )
 
                 # Search for tools
                 available_tools = self.jentic_client.search(plan, top_k=5)
@@ -97,7 +100,12 @@ class StandardReasoner(BaseReasoner):
                     # No tool needed, try to generate answer
                     if observations:
                         final_answer = self._generate_final_answer(goal, observations)
-                        return self.create_reasoning_result(final_answer, True)
+                        return ReasoningResult(
+                            final_answer=final_answer,
+                            iterations=iteration + 1,
+                            tool_calls=tool_calls,
+                            success=True,
+                        )
                     else:
                         failed_attempts.append(
                             f"No suitable tool found for plan: {plan}"
@@ -110,9 +118,18 @@ class StandardReasoner(BaseReasoner):
                 # Act
                 action_params = self.act(tool_details, plan)
 
-                # Execute tool using base class method
-                execution_result = self.execute_tool_safely(
+                # Execute tool
+                execution_result = self.jentic_client.execute(
                     selected_tool["id"], action_params
+                )
+
+                tool_calls.append(
+                    {
+                        "tool_id": selected_tool["id"],
+                        "tool_name": selected_tool["name"],
+                        "params": action_params,
+                        "result": execution_result,
+                    }
                 )
 
                 # Observe
@@ -134,10 +151,18 @@ class StandardReasoner(BaseReasoner):
         # Max iterations reached
         if observations:
             final_answer = self._generate_final_answer(goal, observations)
-            return self.create_reasoning_result(final_answer, True)
+            success = True
         else:
             final_answer = "I was unable to find a solution within the iteration limit."
-            return self.create_reasoning_result(final_answer, False, "Max iterations reached")
+            success = False
+
+        return ReasoningResult(
+            final_answer=final_answer,
+            iterations=max_iterations,
+            tool_calls=tool_calls,
+            success=success,
+            error_message="Max iterations reached" if not success else None,
+        )
 
     def plan(self, goal: str, context: Dict[str, Any]) -> str:
         """Generate a plan for achieving the goal."""
@@ -160,19 +185,77 @@ What should be the next step in the plan to achieve this goal?""",
             },
         ]
 
-        response = self.safe_llm_call(messages=messages, max_tokens=200, temperature=0.7)
+        response = self.llm.chat(messages=messages, max_tokens=200, temperature=0.7)
 
         return response.strip()
 
     def select_tool(
         self, plan: str, available_tools: List[Dict[str, Any]]
     ) -> Optional[Dict[str, Any]]:
-        """Delegate to shared helper in BaseReasoner."""
-        return self.choose_tool_with_llm(plan, available_tools)
+        """Select the most appropriate tool for executing the current plan."""
+        if not available_tools:
+            return None
+
+        if len(available_tools) == 1:
+            return available_tools[0]
+
+        tool_descriptions = "\n".join(
+            [
+                f"- {tool['id']}: {tool['name']} - {tool.get('description', '')}"
+                for tool in available_tools
+            ]
+        )
+
+        messages = [
+            {
+                "role": "system",
+                "content": f"""You are a tool selection expert. Your job is to select the single best tool to execute the given plan.
+Respond with ONLY the ID of the selected tool, or NONE if no tool is suitable.
+
+Available tools:
+{tool_descriptions}
+""",
+            },
+            {"role": "user", "content": f"Plan: {plan}"},
+        ]
+
+        response = self.llm.chat(messages=messages, max_tokens=50, temperature=0.0)
+
+        # Find the tool that matches the response
+        selected_id = response.strip()
+        if selected_id == "NONE":
+            return None
+        return next((t for t in available_tools if t["id"] == selected_id), None)
 
     def act(self, tool: Dict[str, Any], plan: str) -> Dict[str, Any]:
-        """Generate parameters for the *tool* using shared helper."""
-        return self.generate_and_validate_parameters(tool, plan)
+        """Generate parameters for the selected tool."""
+        if not tool.get("parameters"):
+            return {}
+
+        messages = [
+            {
+                "role": "system",
+                "content": f"""You are a parameter generation expert. Given a tool and a plan, generate the correct parameters in JSON format.
+Tool: {tool['name']}
+Tool description: {tool.get('description', '')}
+Tool parameters schema: {json.dumps(tool['parameters'])}
+""",
+            },
+            {
+                "role": "user",
+                "content": f"Plan: {plan}\n\nGenerate the JSON parameters for this tool based on the plan.",
+            },
+        ]
+
+        response = self.llm.chat(messages=messages, max_tokens=500, temperature=0.0)
+
+        try:
+            return json.loads(response)
+        except json.JSONDecodeError:
+            logger.warning(
+                f"Invalid JSON response for tool {tool['name']}: {response}"
+            )
+            return {}
 
     def observe(self, action_result: Dict[str, Any]) -> str:
         """Process and interpret the result of an action."""
@@ -183,15 +266,70 @@ What should be the next step in the plan to achieve this goal?""",
 
     def evaluate(self, goal: str, observations: List[str]) -> bool:
         """Evaluate whether the goal has been achieved based on observations."""
-        # Delegate to shared helper in BaseReasoner
-        return self.llm_goal_evaluation(goal, observations)
+        messages = [
+            {
+                "role": "system",
+                "content": """You are an evaluation expert. Your job is to determine if the goal has been achieved based on the observations.
+Respond with only YES or NO.""",
+            },
+            {
+                "role": "user",
+                "content": f"""Goal: {goal}
+
+Observations:
+- {"\n- ".join(observations)}
+
+Based on these observations, has the goal been achieved? Respond with only YES or NO.""",
+            },
+        ]
+        response = self.llm.chat(messages=messages, max_tokens=10, temperature=0.0)
+        return response.strip().upper() == "YES"
 
     def reflect(
         self, goal: str, observations: List[str], failed_attempts: List[str]
     ) -> str:
         """Reflect on failures and generate improved strategies."""
-        return self.llm_reflect(goal, observations, failed_attempts)
+        messages = [
+            {
+                "role": "system",
+                "content": """You are a reflection expert. Your job is to analyze failed attempts and provide a reflection to improve the next plan.""",
+            },
+            {
+                "role": "user",
+                "content": f"""Goal: {goal}
+
+Observations:
+- {"\n- ".join(observations)}
+
+Failed Attempts:
+- {"\n- ".join(failed_attempts)}
+
+Provide a reflection on why the attempts failed and how to improve the approach.""",
+            },
+        ]
+
+        response = self.llm.chat(messages=messages, max_tokens=300, temperature=0.7)
+
+        return response.strip()
 
     def _generate_final_answer(self, goal: str, observations: List[str]) -> str:
-        """Use shared synthesis helper."""
-        return self.generate_final_answer(goal, observations)
+        """Generate the final answer based on observations."""
+        messages = [
+            {
+                "role": "system",
+                "content": """You are a final answer generation expert. Your job is to provide a comprehensive answer to the original goal based on the observations.""",
+            },
+            {
+                "role": "user",
+                "content": f"""Goal: {goal}
+
+Observations:
+- {"\n- ".join(observations)}
+
+Provide the final answer to the goal based on these observations.""",
+            },
+        ]
+
+        response = self.llm.chat(messages=messages, max_tokens=1000, temperature=0.7)
+
+        return response.strip()
