@@ -223,7 +223,10 @@ IMPORTANT:
                 logger.warning("Goal is empty, skipping tool catalogue search.")
                 return "No tools available. Use tool search to find tools."
 
-            tools = self.jentic_client.search(goal, top_k=10)
+            # Get more tools than we initially show, for progressive expansion
+            all_tools = self.jentic_client.search(goal, top_k=15)
+            # Use smart selection to pick the 8 most relevant tools
+            tools = self._select_most_relevant_tools(all_tools, goal, max_tools=8)
 
             if not tools:
                 return "No tools found for your goal. Use tool search to find other tools."

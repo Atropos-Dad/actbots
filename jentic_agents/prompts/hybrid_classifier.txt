@@ -1,7 +1,14 @@
 Please classify the following user request as 'SINGLE-STEP' or 'MULTI-STEP'.
 
-SINGLE-STEP tasks are direct commands that can likely be completed with one or 2 tool calls (e.g., 'send a message', 'get the weather and then send a message').
-MULTI-STEP tasks require planning, information gathering, or several actions (e.g., 'research X and write a summary in a document', 'book a flight and then a hotel and then send a message').
+SINGLE-STEP tasks are direct commands that can be completed with one tool call (e.g., 'send a message', 'get the weather', 'create a document').
+
+MULTI-STEP tasks require multiple distinct actions, planning, or coordination between different systems (e.g., 'create X and then send Y', 'research X and write a summary', 'book a flight and then a hotel').
+
+Key indicators for MULTI-STEP:
+- Contains "and then" or "then" 
+- Involves different platforms/systems
+- Requires information from one step to inform the next
+- Has multiple distinct verbs/actions
 
 Request: "{goal}"
 

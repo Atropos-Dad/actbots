@@ -484,6 +484,23 @@ class BaseReasoner(ABC):
         logger.warning(f"No tool matched id '{selected_id}', returning first candidate as fallback")
         return available_tools[0]
 
+    # ---- BASIC TOOL RANKING --------------------------------------------------
+    def _select_most_relevant_tools(
+        self,
+        tools: List[Dict[str, Any]],
+        goal: str,
+        max_tools: int = 8,
+    ) -> List[Dict[str, Any]]:
+        """Return the top *max_tools* entries from *tools*.
+
+        Subclasses can override for smarter relevance ranking (LLM re-ranking, TF-IDF, etc.).
+        This basic implementation simply returns the first *max_tools* items so that every
+        reasoner has a safe default and avoids AttributeErrors.
+        """
+        if not tools or max_tools <= 0:
+            return []
+        return tools[:max_tools]
+
     # ---- FINAL ANSWER SYNTHESIS ---------------------------------------------
     def generate_final_answer(self, goal: str, observations: List[str]) -> str:
         """Utility to turn a list of observations into a concise final answer."""
@@ -532,6 +549,55 @@ class BaseReasoner(ABC):
             {"role": "user", "content": prompt}
         ], max_tokens=200, temperature=0.7)
         return response.strip()
+
+    # ---- PROGRESSIVE TOOL SELECTION ------------------------------------------
+    def select_tool_progressive(self, plan_description: str, query: str, initial_limit: int = 8, expanded_limit: int = 15) -> Optional[Dict[str, Any]]:
+        """
+        Progressive tool selection that first tries initial_limit tools, then expands if LLM finds none suitable.
+        
+        Args:
+            plan_description: Description of what we're trying to accomplish
+            query: Search query for tools
+            initial_limit: Initial number of tools to present to LLM (default 8)
+            expanded_limit: Expanded number of tools if initial selection fails (default 15)
+            
+        Returns:
+            Selected tool dictionary or None if no suitable tool found
+        """
+        logger.info(f"Progressive tool selection for: '{query}' (initial: {initial_limit}, expanded: {expanded_limit})")
+        
+        # Get all results from Jentic once
+        all_results = self.jentic.search(query, expanded_limit)
+        
+        if not all_results:
+            logger.info("No tools found from Jentic search")
+            return None
+        
+        # First try with initial_limit tools
+        initial_tools = all_results[:initial_limit]
+        logger.info(f"Trying initial selection with {len(initial_tools)} tools")
+        
+        selected_tool = self.choose_tool_with_llm(plan_description, initial_tools)
+        
+        # If LLM selected a tool from the initial set, return it
+        if selected_tool:
+            logger.info(f"Tool selected from initial set: {selected_tool['id']}")
+            return selected_tool
+        
+        # If we have more tools available, try with the expanded set
+        if len(all_results) > initial_limit:
+            logger.info(f"Initial selection failed, expanding to {len(all_results)} tools")
+            selected_tool = self.choose_tool_with_llm(plan_description, all_results)
+            
+            if selected_tool:
+                logger.info(f"Tool selected from expanded set: {selected_tool['id']}")
+            else:
+                logger.info("No suitable tool found even with expanded set")
+                
+            return selected_tool
+        else:
+            logger.info(f"No expansion possible - only {len(all_results)} tools available")
+            return None
 
     # ---- RESULT HELPERS ------------------------------------------------------
     @staticmethod
