@@ -221,8 +221,10 @@ class BaseReasoner(ABC):
             result = self.jentic_client.execute(tool_id, params)
             
             # Track the tool call
+            tool_meta = getattr(self.jentic_client, "_tool_metadata_cache", {}).get(tool_id, {})
             call_record = {
                 "tool_id": tool_id,
+                "tool_name": tool_meta.get("name", tool_id),
                 "params": params,
                 "result": result,
                 "iteration": self.iteration_count,
@@ -244,8 +246,10 @@ class BaseReasoner(ABC):
             }
             
             # Track failed tool call
+            tool_meta = getattr(self.jentic_client, "_tool_metadata_cache", {}).get(tool_id, {})
             call_record = {
                 "tool_id": tool_id,
+                "tool_name": tool_meta.get("name", tool_id),
                 "params": params,
                 "result": error_result,
                 "iteration": self.iteration_count,

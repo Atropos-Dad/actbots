@@ -556,9 +556,11 @@ IMPORTANT:
 
             search_results = "\n".join(tool_lines)
 
-            # Record the tool search in the call history
+            # Record the tool search in the call history (include tool_name)
+            tool_meta = getattr(self.jentic_client, "_tool_metadata_cache", {}).get("jentic_tool_search", {})
             call_record = {
                 "tool_id": "jentic_tool_search",
+                "tool_name": "Tool Search",
                 "args": args,
                 "result": f"Found {len(tools)} tools",
                 "iteration": state.iteration_count,
@@ -602,9 +604,11 @@ IMPORTANT:
             # Execute the tool using base class method
             result = self.execute_tool_safely(tool_id, resolved_args)
 
-            # Record the tool call for completion tracking & history
+            # Record the tool call for completion tracking & history (include tool_name)
+            tool_meta = getattr(self.jentic_client, "_tool_metadata_cache", {}).get(tool_id, {})
             call_record = {
                 "tool_id": tool_id,
+                "tool_name": tool_meta.get("name", tool_id),
                 "args": resolved_args,
                 "result": result,
                 "iteration": state.iteration_count,
