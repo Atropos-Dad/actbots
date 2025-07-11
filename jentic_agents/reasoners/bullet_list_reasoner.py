@@ -39,6 +39,9 @@ import re
 from collections import deque
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional
+import logging
+import io
+from contextlib import contextmanager
 
 # local utils
 from ..utils.parsing_helpers import (
@@ -168,10 +171,6 @@ def parse_bullet_plan(markdown: str) -> deque[Step]:
             goal_context=goal_context,
         )
         steps.append(step)
-        logger.debug(
-            f"Parsed step: text='{step.text}', goal_context='{step.goal_context}', store_key='{step.store_key}'"
-        )
-
     # ------------------------------------------------------------------
     # Skip container/meta bullets so we only execute leaf actions.
     # A container is detected when the next bullet has a larger indent
@@ -282,7 +281,7 @@ class BulletPlanReasoner(BaseReasoner):
             )
 
         raw_reply = self.safe_llm_call(messages=[{"role": "user", "content": prompt}]).strip()
-        logger.debug("LLM tool-selection reply: %s", raw_reply)
+        logger.info("LLM tool-selection reply: %s", raw_reply)
 
         # 1️⃣ Numeric selection
         match = re.search(r"(\d+)", raw_reply)
@@ -297,6 +296,11 @@ class BulletPlanReasoner(BaseReasoner):
                     chosen["id"]
                     if isinstance(chosen, dict)
                     else getattr(chosen, "id", "unknown")
+                )
+            else:
+                logger.warning(
+                    f"LLM chose tool index {idx + 1}, which is out of bounds for {len(hits)} hits. "
+                    "Proceeding with other selection methods."
                 )
 
         # 2️⃣ ID or name substring
@@ -314,6 +318,21 @@ class BulletPlanReasoner(BaseReasoner):
                 tool_desc = h.get("description", "") if isinstance(h, dict) else getattr(h, "description", "")
                 logger.info(f"LLM chose tool: {tool_name} — {tool_desc}")
                 return h["id"] if isinstance(h, dict) else getattr(h, "id", "unknown")
+
+        # 3️⃣ Fallback to first tool if other methods fail
+        logger.warning(
+            f"LLM tool selection failed to produce a valid choice from reply: '{raw_reply}'. "
+            "Falling back to the first available tool."
+        )
+        chosen = hits[0]
+        tool_name = chosen.get("name") if isinstance(chosen, dict) else getattr(chosen, "name", None)
+        tool_desc = chosen.get("description", "") if isinstance(chosen, dict) else getattr(chosen, "description", "")
+        logger.info(f"Falling back to tool: {tool_name} — {tool_desc}")
+        return (
+            chosen["id"]
+            if isinstance(chosen, dict)
+            else getattr(chosen, "id", "unknown")
+        )
 
 
     def __init__(
@@ -366,7 +385,7 @@ class BulletPlanReasoner(BaseReasoner):
                 prompt = json.dumps(bullet_plan_template, ensure_ascii=False)
             else:
                 prompt = bullet_plan_template.format(goal=state.goal)
-            logger.debug(f"Planning prompt:\n{prompt}")
+            logger.info(f"Planning prompt:\n{prompt}")
             messages = [{"role": "user", "content": prompt}]
             logger.info("Calling LLM for plan generation")
             response = self.safe_llm_call(messages=messages)
@@ -448,7 +467,7 @@ class BulletPlanReasoner(BaseReasoner):
         # 1. Resolve tool ID and load schema
         resolved_tool_id = self._resolve_tool_id_from_memory(tool_id)
         tool_info = self.jentic.load(resolved_tool_id)
-        logger.debug(f"Tool info: {tool_info}")
+        logger.info(f"Tool info: {tool_info}")
 
         # 2. Generate and validate parameters
         # Generate parameters using BulletPlan-specific helper (richer context)
@@ -693,7 +712,7 @@ class BulletPlanReasoner(BaseReasoner):
         return is_complete
 
     # 6. REFLECT (optional) --------------------------------------------
-    def reflect(self, current_step: Step, err_msg: str, state: "ReasonerState") -> bool:
+    def reflect(self, current_step: Step, err_msg: str, state: "ReasonerState", captured_logs: str = "") -> bool:
         logger.info(
             f"Reflecting on failed step: {current_step.text} | Error: {err_msg} | Attempts: {current_step.reflection_attempts}"
         )
@@ -714,6 +733,7 @@ class BulletPlanReasoner(BaseReasoner):
             reflection_template["inputs"]["failed_step_text"] = current_step.text
             reflection_template["inputs"]["error_message"] = err_msg
             reflection_template["inputs"]["history"] = "\n".join(state.history)
+            reflection_template["inputs"]["execution_logs"] = captured_logs
             tool_schema = json.dumps(current_step.params or {}, indent=2)
             failed_args  = json.dumps(getattr(current_step, "args", {}), indent=2)
             reflection_template["inputs"]["tool_schema"] = tool_schema
@@ -762,6 +782,42 @@ class BulletPlanReasoner(BaseReasoner):
             logger.info(
                 f"LLM revised step from '{current_step.text}' to '{processed_step}'"
             )
+
+            # Try to parse the revision as a plan (multi-step) or a single step (JSON object)
+            try:
+                clean_reply = strip_backtick_fences(processed_step)
+                
+                # Check for multi-step plan (JSON array or markdown list)
+                is_bullet_list = re.search(r"^\s*([-*]|\d+\.)\s+", clean_reply, re.MULTILINE)
+                is_json_array = clean_reply.startswith("[")
+
+                if is_bullet_list or is_json_array:
+                    logger.info("Reflection produced a multi-step patch. Parsing and inserting new steps.")
+                    new_steps = parse_bullet_plan(processed_step)
+                    if new_steps:
+                        state.plan.popleft()  # Remove the old failed step
+                        for step in reversed(new_steps):
+                            state.plan.appendleft(step)
+                        return True
+                    else:
+                        logger.warning("Failed to parse multi-step reflection. Treating as single step.")
+                
+                # Check for single JSON object step
+                elif clean_reply.startswith("{"):
+                    logger.info("Reflection produced a single JSON step. Updating current step.")
+                    step_data = json.loads(clean_reply)
+                    current_step.text = step_data.get("text", current_step.text)
+                    if "step_type" in step_data:
+                         setattr(current_step, 'step_type', step_data.get("step_type"))
+                    current_step.store_key = step_data.get("store_key", current_step.store_key)
+                    current_step.status = "pending"
+                    current_step.tool_id = None
+                    return True
+
+            except (json.JSONDecodeError, Exception) as e:
+                logger.warning(f"Could not parse reflection response as JSON object/array: {e}. Treating as raw text.")
+
+            # Fallback for raw text revision
             current_step.text = processed_step
             current_step.status = "pending"
             current_step.tool_id = None
@@ -911,152 +967,162 @@ class BulletPlanReasoner(BaseReasoner):
         )
 
         from .base_reasoner import ReasoningResult  # local import to avoid circular
+        logger_names_to_capture = [
+            "jentic_agents.reasoners.bullet_list_reasoner",
+            "jentic_agents.reasoners.base_reasoner",
+            "jentic_agents.platform.jentic_client",
+            "arazzo-runner",
+            "jentic.agent_runtime.tool_execution"
+        ]
 
-        state = self._init_state(goal, {})
-        tool_calls: List[Dict[str, Any]] = []
+        with capture_logs_to_buffer(logger_names_to_capture) as log_buffer:
+            state = self._init_state(goal, {})
+            tool_calls: List[Dict[str, Any]] = []
 
-        iteration = 0
-        while iteration < max_iterations:
-            logger.info(f"Iteration {iteration + 1}/{max_iterations}")
+            iteration = 0
+            while iteration < max_iterations:
+                logger.info(f"Iteration {iteration + 1}/{max_iterations}")
 
-            # If the plan failed in a previous iteration, and reflection didn't fix it, stop.
-            if state.failed:
-                logger.error(
-                    "A step has failed and could not be recovered. Terminating loop."
-                )
-                break
-
-            # Check if goal is already marked as completed
-            if state.goal_completed:
-                logger.info("Goal marked as completed! Breaking from loop")
-                break
-
-            # Agent can proactively check if it needs human help before proceeding
-            if iteration > 0 and self._should_check_for_human_guidance(
-                state, iteration
-            ):
-                if self._check_for_proactive_escalation(state, iteration):
-                    continue  # Human guidance may have modified the state
-
-            # Ensure we have at least one step planned.
-            if iteration == 0 and not state.plan:
-                logger.info("Generating plan for goal.")
-                self.plan(state)
-
-            # If the plan is empty, we are done.
-            if not state.plan:
-                logger.info("Plan empty. Marking goal as complete.")
-                state.goal_completed = True
-                break
-
-            current_step = state.plan[0]
-            # If the current step is already 'done' or 'failed', something is wrong.
-            # This can happen if reflection logic is faulty. For now, we'll log and skip.
-            if current_step.status not in ("pending", "running"):
-                logger.warning(
-                    f"Skipping step '{current_step.text}' with unexpected status '{current_step.status}'"
-                )
-                state.plan.popleft()
-                continue
-
-            logger.info(f"Executing step: {current_step.text}")
-
-            # Use explicit step_type if present
-            step_type = getattr(current_step, "step_type", None)
-            if step_type:
-                logger.info(f"Step type: {step_type}")
-            else:
-                step_type_enum = self._classify_step(current_step, state)
-                step_type = step_type_enum.value.upper()
-                logger.info(f"Step type: {step_type}")
-
-            try:
-                if step_type == "SEARCH":
-                    tool_id = self.select_tool(current_step, state)
-                    logger.info(f"Tool selected: {tool_id} ({current_step.tool_name})")
-                    # Optionally store tool_id in memory if store_key is present
-                    if current_step.store_key:
-                        self.memory.set(
-                            key=current_step.store_key,
-                            value={"id": tool_id},
-                            description=f"Tool ID for step '{current_step.text}'",
-                        )
-                        logger.debug(
-                            f"Stored tool_id in memory with key '{current_step.store_key}'"
-                        )
-                    result = {"tool_id": tool_id}
-                elif step_type == "EXECUTE":
-                    tool_id = self.select_tool(current_step, state)
-                    logger.info(f"Tool selected: {tool_id} ({current_step.tool_name})")
-                    result = self.act(tool_id, state, current_step)
-                    logger.info(f"Action result type: {type(result)}")
-                    tool_calls.append(
-                        {
-                            "tool_id": tool_id,
-                            "step": current_step.text,
-                            "result": result,
-                        }
+                # If the plan failed in a previous iteration, and reflection didn't fix it, stop.
+                if state.failed:
+                    logger.error(
+                        "A step has failed and could not be recovered. Terminating loop."
                     )
-                elif step_type == "REASON":
-                    result = self._execute_reasoning_step(current_step, state)
-                    logger.info("Reasoning step completed.")
-                elif step_type in ["TOOL_USING", "TOOL"]:  # Support both formats
-                    tool_id = self.select_tool(current_step, state)
-                    logger.info(f"Tool selected: {tool_id} ({current_step.tool_name})")
-                    result = self.act(tool_id, state, current_step)
-                    logger.info(f"Action result type: {type(result)}")
-                    tool_calls.append(
-                        {
-                            "tool_id": tool_id,
-                            "step": current_step.text,
-                            "result": result,
-                        }
-                    )
-                elif step_type in ["REASONING"]:  # Support both formats
-                    result = self._execute_reasoning_step(current_step, state)
-                    logger.info("Reasoning step completed.")
-                else:
+                    break
+
+                # Check if goal is already marked as completed
+                if state.goal_completed:
+                    logger.info("Goal marked as completed! Breaking from loop")
+                    break
+
+                # Agent can proactively check if it needs human help before proceeding
+                if iteration > 0 and self._should_check_for_human_guidance(
+                    state, iteration
+                ):
+                    if self._check_for_proactive_escalation(state, iteration):
+                        continue  # Human guidance may have modified the state
+
+                # Ensure we have at least one step planned.
+                if iteration == 0 and not state.plan:
+                    logger.info("Generating plan for goal.")
+                    self.plan(state)
+
+                # If the plan is empty, we are done.
+                if not state.plan:
+                    logger.info("Plan empty. Marking goal as complete.")
+                    state.goal_completed = True
+                    break
+
+                current_step = state.plan[0]
+                # If the current step is already 'done' or 'failed', something is wrong.
+                # This can happen if reflection logic is faulty. For now, we'll log and skip.
+                if current_step.status not in ("pending", "running"):
                     logger.warning(
-                        f"Unknown step_type '{step_type}', defaulting to EXECUTE."
+                        f"Skipping step '{current_step.text}' with unexpected status '{current_step.status}'"
                     )
-                    tool_id = self.select_tool(current_step, state)
-                    logger.info(f"Tool selected: {tool_id} ({current_step.tool_name})")
-                    result = self.act(tool_id, state, current_step)
-                    logger.info(f"Action result type: {type(result)}")
-                    tool_calls.append(
-                        {
-                            "tool_id": tool_id,
-                            "step": current_step.text,
-                            "result": result,
-                        }
-                    )
+                    state.plan.popleft()
+                    continue
 
-                self.observe(result, state)
+                logger.info(f"Executing step: {current_step.text}")
 
-                # Check if the step failed after observation and trigger reflection
-                if state.failed and current_step.status == "failed":
-                    logger.info("Step failed after observation, attempting reflection.")
-                    error_msg = (
-                        getattr(current_step.result, "error", str(current_step.result))
-                        if hasattr(current_step.result, "error")
-                        else str(current_step.result)
-                    )
-                    if self.reflect(current_step, error_msg, state):
-                        logger.info("Step revised after failure, retrying.")
-                        state.failed = False
+                # Use explicit step_type if present
+                step_type = getattr(current_step, "step_type", None)
+                if step_type:
+                    logger.info(f"Step type: {step_type}")
+                else:
+                    step_type_enum = self._classify_step(current_step, state)
+                    step_type = step_type_enum.value.upper()
+                    logger.info(f"Step type: {step_type}")
+
+                try:
+                    if step_type == "SEARCH":
+                        tool_id = self.select_tool(current_step, state)
+                        logger.info(f"Tool selected: {tool_id} ({current_step.tool_name})")
+                        # Optionally store tool_id in memory if store_key is present
+                        if current_step.store_key:
+                            self.memory.set(
+                                key=current_step.store_key,
+                                value={"id": tool_id},
+                                description=f"Tool ID for step '{current_step.text}'",
+                            )
+                            logger.debug(
+                                f"Stored tool_id in memory with key '{current_step.store_key}'"
+                            )
+                        result = {"tool_id": tool_id}
+                    elif step_type == "EXECUTE":
+                        tool_id = self.select_tool(current_step, state)
+                        logger.info(f"Tool selected: {tool_id} ({current_step.tool_name})")
+                        result = self.act(tool_id, state, current_step)
+                        logger.info(f"Action result type: {type(result)}")
+                        tool_calls.append(
+                            {
+                                "tool_id": tool_id,
+                                "step": current_step.text,
+                                "result": result,
+                            }
+                        )
+                    elif step_type == "REASON":
+                        result = self._execute_reasoning_step(current_step, state)
+                        logger.info("Reasoning step completed.")
+                    elif step_type in ["TOOL_USING", "TOOL"]:  # Support both formats
+                        tool_id = self.select_tool(current_step, state)
+                        logger.info(f"Tool selected: {tool_id} ({current_step.tool_name})")
+                        result = self.act(tool_id, state, current_step)
+                        logger.info(f"Action result type: {type(result)}")
+                        tool_calls.append(
+                            {
+                                "tool_id": tool_id,
+                                "step": current_step.text,
+                                "result": result,
+                            }
+                        )
+                    elif step_type in ["REASONING"]:  # Support both formats
+                        result = self._execute_reasoning_step(current_step, state)
+                        logger.info("Reasoning step completed.")
                     else:
                         logger.warning(
-                            "Reflection failed after step failure. Ending reasoning loop."
+                            f"Unknown step_type '{step_type}', defaulting to EXECUTE."
+                        )
+                        tool_id = self.select_tool(current_step, state)
+                        logger.info(f"Tool selected: {tool_id} ({current_step.tool_name})")
+                        result = self.act(tool_id, state, current_step)
+                        logger.info(f"Action result type: {type(result)}")
+                        tool_calls.append(
+                            {
+                                "tool_id": tool_id,
+                                "step": current_step.text,
+                                "result": result,
+                            }
                         )
 
-            except Exception as e:  # noqa: BLE001
-                logger.error(f"Step execution failed: {e}")
-                logger.info("Attempting reflection on failed step.")
-                if self.reflect(current_step, str(e), state):
-                    logger.info("Step revised, retrying.")
-                    state.failed = False
-                else:
-                    logger.warning("Reflection failed. Ending reasoning loop.")
+                    self.observe(result, state)
+
+                    # Check if the step failed after observation and trigger reflection
+                    if state.failed and current_step.status == "failed":
+                        logger.info("Step failed after observation, attempting reflection.")
+                        error_msg = (
+                            getattr(current_step.result, "error", str(current_step.result))
+                            if hasattr(current_step.result, "error")
+                            else str(current_step.result)
+                        )
+                        logs = log_buffer.getvalue()
+                        if self.reflect(current_step, error_msg, state, logs):
+                            logger.info("Step revised after failure, retrying.")
+                            state.failed = False
+                        else:
+                            logger.warning(
+                                "Reflection failed after step failure. Ending reasoning loop."
+                            )
+
+                except Exception as e:  # noqa: BLE001
+                    logger.error(f"Step execution failed: {e}")
+                    logger.info("Attempting reflection on failed step.")
+                    logs = log_buffer.getvalue()
+                    if self.reflect(current_step, str(e), state, logs):
+                        logger.info("Step revised, retrying.")
+                        state.failed = False
+                    else:
+                        logger.warning("Reflection failed. Ending reasoning loop.")
 
             iteration += 1
         logger.info(

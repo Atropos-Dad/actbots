@@ -38,7 +38,7 @@ class HybridReasoner:
 
     def __init__(
         self,
-        jentic: JenticClient,
+        jentic_client: JenticClient,
         memory: ScratchPadMemory,
         llm: Optional[BaseLLM] = None,
         model: Optional[str] = None,

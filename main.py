@@ -42,12 +42,14 @@ from jentic_agents.utils.config import validate_api_keys, get_config_value
 from jentic_agents.memory.scratch_pad import ScratchPadMemory
 from jentic_agents.platform.jentic_client import JenticClient
 from jentic_agents.utils.llm import LiteLLMChatLLM
-from jentic_agents.reasoners.hybrid_reasoner import HybridReasoner
 from jentic_agents.agents.interactive_cli_agent import InteractiveCLIAgent
 from jentic_agents.agents.simple_ui_agent import SimpleUIAgent
 from jentic_agents.communication.controllers.cli_controller import CLIController
 from jentic_agents.communication.inbox.cli_inbox import CLIInbox
 from jentic_agents.communication.controllers.discord_controller import DiscordController
+from jentic_agents.reasoners.bullet_list_reasoner import BulletPlanReasoner
+from jentic_agents.reasoners.freeform_reasoner import FreeformReasoner
+from jentic_agents.reasoners.hybrid_reasoner import HybridReasoner
 
 logger = get_logger(__name__)
 
@@ -72,8 +74,8 @@ def main():
 
     try:
         if args.mode == "ui":
-            reasoner = HybridReasoner(
-                jentic=jentic_client,
+            reasoner = BulletPlanReasoner(
+                jentic_client=jentic_client,
                 memory=memory,
                 llm=llm_wrapper,
             )
@@ -87,8 +89,8 @@ def main():
             agent.spin()
         elif args.mode == "cli":
             controller = CLIController()
-            reasoner = HybridReasoner(
-                jentic=jentic_client,
+            reasoner = BulletPlanReasoner(
+                jentic_client=jentic_client,
                 memory=memory,
                 llm=llm_wrapper,
                 intervention_hub=controller.intervention_hub,
@@ -102,8 +104,8 @@ def main():
             agent.spin()
         elif args.mode == "discord":
             controller, bot, discord_token = DiscordController.create_controller("discord")
-            reasoner = HybridReasoner(
-                jentic=jentic_client,
+            reasoner = BulletPlanReasoner(
+                jentic_client=jentic_client,
                 memory=memory,
                 llm=llm_wrapper,
                 intervention_hub=controller.intervention_hub,
