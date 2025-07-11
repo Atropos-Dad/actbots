@@ -99,11 +99,17 @@ class LiteLLMChatLLM(BaseLLM):
         self._total_cost += cost
         self._total_tokens += total_tokens
         
-        # Log telemetry
-        self._logger.info(
-            f"LLM Call - Model: {self.model}, Duration: {duration:.3f}s, "
-            f"Tokens: {total_tokens} (prompt: {prompt_tokens}, completion: {completion_tokens}), "
-            f"Cost: ${cost:.6f}, Total Calls: {self._total_calls}, Total Cost: ${self._total_cost:.6f}"
+        # Log detailed telemetry at DEBUG level to avoid cluttering INFO output
+        self._logger.debug(
+            "LLM Call - Model: %s, Duration: %.3fs, Tokens: %d (prompt: %d, completion: %d), Cost: $%.6f, Total Calls: %d, Total Cost: $%.6f",
+            self.model,
+            duration,
+            total_tokens,
+            prompt_tokens,
+            completion_tokens,
+            cost,
+            self._total_calls,
+            self._total_cost,
         )
 
     def _track_error(self, error: Exception, start_time: float, messages: List[Dict[str, str]]):
