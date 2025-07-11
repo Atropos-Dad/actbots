@@ -78,11 +78,8 @@ class StandardReasoner(BaseReasoner):
                     final_answer = self._generate_final_answer(goal, observations)
                     return self.create_reasoning_result(final_answer, True)
 
-                # Search for tools
-                available_tools = self.jentic_client.search(plan, top_k=5)
-
-                # Select tool
-                selected_tool = self.select_tool(plan, available_tools)
+                # Use shared progressive selection (defaults: first 8 hits, then 15)
+                selected_tool = self.select_tool_progressive(plan, plan)
                 if selected_tool:
                     logger.info(f"Tool selected: {selected_tool['id']}")
                 else:

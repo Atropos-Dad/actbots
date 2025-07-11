@@ -402,36 +402,16 @@ class BulletPlanReasoner(BaseReasoner):
                     plan_step.tool_id = stored["id"]
                     return stored["id"]
 
-        # Build a search query for the plan step and get candidate tools
+        # Build a search query for the plan step and use progressive tool selection
         search_query = self._build_search_query(plan_step, state)
         logger.info(f"Search query: {search_query}")
-        search_hits = self.jentic.search(search_query, top_k=self.search_top_k)
-
-        if not search_hits:
-            logger.error(f"No tools found for query: '{search_query}'")
-            raise RuntimeError(f"No tools found for query: '{search_query}'")
-
-        # Sort candidates so those whose provider is mentioned in the plan step are prioritized
-        step_text_lower = plan_step.text.lower()
-
-        def provider_mentioned(hit):
-            api_name = (
-                hit.get("api_name", "").lower()
-                if isinstance(hit, dict)
-                else getattr(hit, "api_name", "").lower()
-            )
-            if not api_name:
-                return False
-            domain_part = api_name.split(".")[0]
-            return (api_name in step_text_lower) or (domain_part in step_text_lower)
-
-        search_hits = sorted(search_hits, key=lambda h: not provider_mentioned(h))
-
-        # Use the LLM to select the best tool from the candidates
-        helper_choice = self._select_tool_with_llm(plan_step, search_hits, state)
-        if helper_choice:
-            plan_step.tool_id = helper_choice
-            return helper_choice
+        
+        # Use shared progressive selection (defaults handle 8 ➔ 15 logic)
+        selected_tool = self.select_tool_progressive(plan_step.text, search_query)
+        
+        if selected_tool:
+            plan_step.tool_id = selected_tool["id"]
+            return selected_tool["id"]
 
         # If no tool is selected, raise an error
         raise RuntimeError(

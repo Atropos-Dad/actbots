@@ -223,7 +223,10 @@ IMPORTANT:
                 logger.warning("Goal is empty, skipping tool catalogue search.")
                 return "No tools available. Use tool search to find tools."
 
-            tools = self.jentic_client.search(goal, top_k=10)
+            # Get more tools than we initially show, for progressive expansion
+            all_tools = self.jentic_client.search(goal, top_k=15)
+            # Use smart selection to pick the 8 most relevant tools
+            tools = self._select_most_relevant_tools(all_tools, goal, max_tools=8)
 
             if not tools:
                 return "No tools found for your goal. Use tool search to find other tools."
@@ -553,9 +556,11 @@ IMPORTANT:
 
             search_results = "\n".join(tool_lines)
 
-            # Record the tool search in the call history
+            # Record the tool search in the call history (include tool_name)
+            tool_meta = getattr(self.jentic_client, "_tool_metadata_cache", {}).get("jentic_tool_search", {})
             call_record = {
                 "tool_id": "jentic_tool_search",
+                "tool_name": "Tool Search",
                 "args": args,
                 "result": f"Found {len(tools)} tools",
                 "iteration": state.iteration_count,
@@ -599,9 +604,11 @@ IMPORTANT:
             # Execute the tool using base class method
             result = self.execute_tool_safely(tool_id, resolved_args)
 
-            # Record the tool call for completion tracking & history
+            # Record the tool call for completion tracking & history (include tool_name)
+            tool_meta = getattr(self.jentic_client, "_tool_metadata_cache", {}).get(tool_id, {})
             call_record = {
                 "tool_id": tool_id,
+                "tool_name": tool_meta.get("name", tool_id),
                 "args": resolved_args,
                 "result": result,
                 "iteration": state.iteration_count,

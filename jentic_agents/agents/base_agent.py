@@ -12,6 +12,9 @@ from ..communication.hitl.base_intervention_hub import BaseInterventionHub
 from ..communication.outbox.base_outbox import BaseOutbox
 from ..communication.controllers.base_controller import BaseController
 from ..platform.jentic_client import JenticClient
+from ..utils.logger import get_logger
+
+logger = get_logger(__name__)
 
 
 class BaseAgent(ABC):
@@ -112,6 +115,17 @@ class BaseAgent(ABC):
 
         # Store the result in memory
         self.memory.store("last_result", result.model_dump())
+
+        # Report final telemetry for this goal
+        if hasattr(self.reasoner.llm, 'get_telemetry_stats'):
+            final_stats = self.reasoner.llm.get_telemetry_stats()
+            logger.info(
+                f"📊 Final Goal Telemetry - Goal: '{goal[:50]}{'...' if len(goal) > 50 else ''}', "
+                f"Success: {result.success}, "
+                f"Total cost: ${final_stats.get('total_cost', 0):.6f}, "
+                f"Total tokens: {final_stats.get('total_tokens', 0)}, "
+                f"Total calls: {final_stats.get('total_calls', 0)}"
+            )
 
         return result
 
