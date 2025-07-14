@@ -76,6 +76,15 @@ class CLIOutbox(BaseOutbox):
                     tool_name = call.get("tool_name", call.get("tool_id", "Unknown"))
                     success_text.append(f"  {i}. {tool_name}\n", style="dim")
 
+            # Append LLM telemetry summary (always show, even if no tools)
+            try:
+                from ...utils.llm_telemetry import LLMTelemetry
+                cost_line = LLMTelemetry.get_cost_summary()
+                success_text.append(f"\n{cost_line}\n", style="dim")
+            except Exception:
+                # Fallback silently if telemetry not available
+                pass
+
             panel = Panel(
                 success_text, title="Success", border_style="green", padding=(1, 2)
             )

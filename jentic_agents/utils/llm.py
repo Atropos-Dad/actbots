@@ -7,6 +7,7 @@ from typing import List, Dict
 import asyncio
 import concurrent.futures
 from .config import get_config_value
+from .llm_telemetry import LLMTelemetry
 
 
 class BaseLLM(ABC):
@@ -51,5 +52,15 @@ class LiteLLMChatLLM(BaseLLM):
             temperature=kwargs.get("temperature", self.temperature),
             max_tokens=kwargs.get("max_tokens", self.max_tokens),
         )
+        # Record token usage for telemetry if available
+        try:
+            usage = resp.usage if hasattr(resp, "usage") else resp["usage"]  # type: ignore[index]
+            prompt_toks = int(usage["prompt_tokens"])
+            completion_toks = int(usage["completion_tokens"])
+            LLMTelemetry.add_usage(self.model, prompt_toks, completion_toks)
+        except Exception:
+            # Silently ignore if structure is unexpected – we don't want to
+            # break normal execution just because of missing usage info.
+            pass
         content = resp.choices[0].message.content
         return content or ""

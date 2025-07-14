@@ -266,6 +266,14 @@ Ready to help! 🚀"""
                         tool_name = call.get('tool_name', call.get('tool_id', 'Unknown'))
                         tools_list.append(tool_name)
                     description += f"\n**Tools:** {', '.join(set(tools_list))}"
+
+                # Append LLM cost summary
+                try:
+                    from ...utils.llm_telemetry import LLMTelemetry
+                    cost_line = LLMTelemetry.get_cost_summary()
+                    description += f"\n\n*{cost_line}*"
+                except Exception:
+                    pass
                 
                 embed = self._create_embed(title, description, 0x27ae60)
                 asyncio.create_task(self._send_message(embed=embed, channel_id=channel_id, mention_users=True))
