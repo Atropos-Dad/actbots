@@ -370,6 +370,9 @@ class BaseReasoner(ABC):
         """Reset reasoner state for reuse."""
         self.tool_calls.clear()
         self.iteration_count = 0
+        # Clear executed tools tracking for fresh goal
+        if hasattr(self, 'jentic_client') and self.jentic_client:
+            self.jentic_client.clear_executed_tools()
         logger.debug("Reasoner state reset")
         
     def load_prompt(self, prompt_name: str) -> str:

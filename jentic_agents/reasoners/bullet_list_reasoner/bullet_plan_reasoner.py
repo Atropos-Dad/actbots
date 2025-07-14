@@ -87,8 +87,8 @@ class BulletPlanReasoner(BaseReasoner):
         # Initialize state  
         state = ReasonerState(goal=goal)
         
-        # Clear any previously tracked tools for this new goal
-        self.jentic_client.clear_executed_tools()
+        # Reset base class state for fresh run
+        self.reset_state()
         
         iteration = 0
         while iteration < max_iterations:
