@@ -67,13 +67,22 @@ class CLIOutbox(BaseOutbox):
 
             tool_calls = getattr(result, "tool_calls", [])
             iterations = getattr(result, "iterations", 0)
+            cost_stats = getattr(result, "cost_stats", None)
+            
             if tool_calls:
+
                 success_text.append("\nTools used:\n", style="dim")
                 for call in tool_calls:
                     # Handle both formatted (from jentic_client.get_executed_tools) and raw formats
                     tool_name = call.get("name", call.get("tool_name", "Unknown Tool"))
                     tool_id = call.get("id", call.get("tool_id", "unknown"))
                     success_text.append(f"  • {tool_name} (ID: {tool_id})\n", style="dim")
+            # Add cost information if available
+            if cost_stats and cost_stats.get("total_cost", 0) > 0:
+                success_text.append(
+                    f"\nLLM cost: ${cost_stats['total_cost']:.4f} ({int(cost_stats['total_tokens'])} tokens)\n",
+                    style="dim"
+                )
 
             panel = Panel(
                 success_text, title="Success", border_style="green", padding=(1, 2)

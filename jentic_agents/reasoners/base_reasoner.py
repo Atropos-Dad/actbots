@@ -35,6 +35,7 @@ class ReasoningResult(BaseModel):
     tool_calls: List[Dict[str, Any]]
     success: bool
     error_message: Optional[str] = None
+    cost_stats: Optional[Dict[str, float]] = None
 
 
 class BaseReasoner(ABC):
@@ -272,6 +273,7 @@ class BaseReasoner(ABC):
         """
         Universal result creation pattern used by all reasoners.
         """
+
         # Use properly formatted tool information from jentic_client
         formatted_tool_calls = []
         if hasattr(self, 'jentic_client') and self.jentic_client:
@@ -281,12 +283,18 @@ class BaseReasoner(ABC):
             # Fallback to raw tool_calls if jentic_client not available
             formatted_tool_calls = self.tool_calls
             
+        # Get cost stats from LLM if available
+        cost_stats = None
+        if hasattr(self.llm, 'get_cost_stats'):
+            cost_stats = self.llm.get_cost_stats()
+        
         return ReasoningResult(
             final_answer=final_answer,
             iterations=self.iteration_count,
             tool_calls=formatted_tool_calls,
             success=success,
-            error_message=error_message
+            error_message=error_message,
+            cost_stats=cost_stats
         )
     
     def process_llm_response_for_escalation(self, response: str, context: str = "") -> str:
