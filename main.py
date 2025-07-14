@@ -54,7 +54,7 @@ def agent_setup(controller, jentic_client, memory, llm_wrapper):
             jentic=jentic_client,
             memory=memory,
             llm=llm_wrapper,
-            intervention_hub=controller.intervention_hub,
+            intervention_hub=controller.intervention_hub if controller else None,
         )
         agent = InteractiveCLIAgent(
             reasoner=reasoner,
