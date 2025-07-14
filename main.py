@@ -11,7 +11,7 @@ SETUP INSTRUCTIONS:
    - ANTHROPIC_API_KEY: If using Anthropic as LLM provider
    - DISCORD_BOT_TOKEN: Your Discord bot token (for Discord mode)
 
-3. Edit `pyproject.toml` to set your desired LLM provider and model, e.g.:
+3. Edit `config.toml` to set your desired LLM provider and model, e.g.:
 
    [tool.actbots.llm]
    provider = "openai"  # or "gemini", or "anthropic"
