@@ -7,9 +7,7 @@ from typing import Any, Dict, List, Optional
 from pydantic import BaseModel
 import enum
 import re
-import logging
 import json
-from textwrap import dedent
 import os
 
 from ..platform.jentic_client import JenticClient
@@ -200,6 +198,9 @@ class BaseReasoner(ABC):
         """
         Call LLM in async-safe way. Prevents Discord bot freezing.
         """
+        logger = get_logger(__name__)
+        timeout_seconds = kwargs.pop('timeout', 60)  # Default 60 second timeout
+        
         try:
             import asyncio
             loop = asyncio.get_running_loop()
@@ -207,9 +208,17 @@ class BaseReasoner(ABC):
                 import concurrent.futures
                 with concurrent.futures.ThreadPoolExecutor() as executor:
                     future = executor.submit(self.llm.chat, messages, **kwargs)
-                    return future.result()
+                    try:
+                        return future.result(timeout=timeout_seconds)
+                    except concurrent.futures.TimeoutError:
+                        logger.error(f"LLM call timed out after {timeout_seconds} seconds")
+                        raise RuntimeError(f"LLM call timed out after {timeout_seconds} seconds")
         except RuntimeError:
             pass
+        
+        # For synchronous calls, we can't easily add timeout without more complex threading
+        # But most timeouts happen in async contexts (Discord)
+        logger.debug("Making synchronous LLM call")
         return self.llm.chat(messages, **kwargs)
     
     def execute_tool_safely(self, tool_id: str, params: Dict[str, Any]) -> Dict[str, Any]:
@@ -264,6 +273,16 @@ class BaseReasoner(ABC):
         """
         Universal result creation pattern used by all reasoners.
         """
+
+        # Use properly formatted tool information from jentic_client
+        formatted_tool_calls = []
+        if hasattr(self, 'jentic_client') and self.jentic_client:
+            executed_tools = self.jentic_client.get_executed_tools()
+            formatted_tool_calls = executed_tools
+        else:
+            # Fallback to raw tool_calls if jentic_client not available
+            formatted_tool_calls = self.tool_calls
+            
         # Get cost stats from LLM if available
         cost_stats = None
         if hasattr(self.llm, 'get_cost_stats'):
@@ -272,7 +291,7 @@ class BaseReasoner(ABC):
         return ReasoningResult(
             final_answer=final_answer,
             iterations=self.iteration_count,
-            tool_calls=self.tool_calls,
+            tool_calls=formatted_tool_calls,
             success=success,
             error_message=error_message,
             cost_stats=cost_stats
@@ -351,6 +370,9 @@ class BaseReasoner(ABC):
         """Reset reasoner state for reuse."""
         self.tool_calls.clear()
         self.iteration_count = 0
+        # Clear executed tools tracking for fresh goal
+        if hasattr(self, 'jentic_client') and self.jentic_client:
+            self.jentic_client.clear_executed_tools()
         logger.debug("Reasoner state reset")
         
     def load_prompt(self, prompt_name: str) -> str:

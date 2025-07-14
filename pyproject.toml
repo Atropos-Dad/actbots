@@ -45,7 +45,7 @@ path = "jentic_agents/logs/actbots.log"
 format = "%(asctime)s - %(levelname)-8s - %(name)s - %(message)s"
 
 [tool.actbots.logging.file.rotation]
-enabled = true
+enabled = false
 max_bytes = 10485760
 backup_count = 5
 
@@ -65,6 +65,15 @@ chroma_path = "jentic_agents/data/chroma_db"
 llm_provider = "gemini"
 llm_model = "gemini-2.5-flash"
 embed_model = "text-embedding-3-small"
+
+[tool.actbots.reasoner.bullet_plan]
+max_reflection_attempts = 3
+search_top_k = 10
+max_iterations = 20
+llm_timeout_seconds = 30
+parameter_generation_retries = 3
+enable_caching = true
+log_level = "INFO"
 
 [tool.actbots.discord]
 enabled = true

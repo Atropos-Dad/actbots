@@ -42,14 +42,27 @@ from jentic_agents.utils.config import validate_api_keys, get_config_value
 from jentic_agents.memory.scratch_pad import ScratchPadMemory
 from jentic_agents.platform.jentic_client import JenticClient
 from jentic_agents.utils.llm import LiteLLMChatLLM
-from jentic_agents.reasoners.hybrid_reasoner import HybridReasoner
+from jentic_agents.reasoners.hybrid_reasoner.hybrid_reasoner import HybridReasoner
 from jentic_agents.agents.interactive_cli_agent import InteractiveCLIAgent
-from jentic_agents.agents.simple_ui_agent import SimpleUIAgent
 from jentic_agents.communication.controllers.cli_controller import CLIController
-from jentic_agents.communication.inbox.cli_inbox import CLIInbox
 from jentic_agents.communication.controllers.discord_controller import DiscordController
 
 logger = get_logger(__name__)
+
+def agent_setup(controller, jentic_client, memory, llm_wrapper):
+        reasoner = HybridReasoner(
+            jentic=jentic_client,
+            memory=memory,
+            llm=llm_wrapper,
+            intervention_hub=controller.intervention_hub if controller else None,
+        )
+        agent = InteractiveCLIAgent(
+            reasoner=reasoner,
+            memory=memory,
+            controller=controller,
+            jentic_client=jentic_client,
+        )
+        return agent
 
 def main():
     parser = argparse.ArgumentParser(description="ActBots Live Demo")
@@ -72,48 +85,16 @@ def main():
 
     try:
         if args.mode == "ui":
-            reasoner = HybridReasoner(
-                jentic=jentic_client,
-                memory=memory,
-                llm=llm_wrapper,
-            )
-            inbox = CLIInbox(prompt="Enter your goal: ")
-            agent = SimpleUIAgent(
-                reasoner=reasoner,
-                memory=memory,
-                inbox=inbox,
-                jentic_client=jentic_client,
-            )
+            controller = None  # UI mode doesn't need a controller
+            agent = agent_setup(controller, jentic_client, memory, llm_wrapper)
             agent.spin()
         elif args.mode == "cli":
             controller = CLIController()
-            reasoner = HybridReasoner(
-                jentic=jentic_client,
-                memory=memory,
-                llm=llm_wrapper,
-                intervention_hub=controller.intervention_hub,
-            )
-            agent = InteractiveCLIAgent(
-                reasoner=reasoner,
-                memory=memory,
-                controller=controller,
-                jentic_client=jentic_client,
-            )
+            agent = agent_setup(controller, jentic_client, memory, llm_wrapper)
             agent.spin()
         elif args.mode == "discord":
             controller, bot, discord_token = DiscordController.create_controller("discord")
-            reasoner = HybridReasoner(
-                jentic=jentic_client,
-                memory=memory,
-                llm=llm_wrapper,
-                intervention_hub=controller.intervention_hub,
-            )
-            agent = InteractiveCLIAgent(
-                reasoner=reasoner,
-                memory=memory,
-                controller=controller,
-                jentic_client=jentic_client,
-            )
+            agent = agent_setup(controller, jentic_client, memory, llm_wrapper)
             discord_user_id = get_config_value("discord", "target_user_id")
             monitored_channels = get_config_value("discord", "monitored_channels", default=[])
             default_channel_id = get_config_value("discord", "default_channel_id", default=None)

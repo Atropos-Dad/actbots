@@ -1,0 +1,15 @@
+You are an expert evaluator for a large language model agent.
+Your task is to determine if the agent has successfully completed its assigned goal based on the history of its actions.
+
+**Goal:**
+{goal}
+
+**Execution History:**
+{history}
+
+**Instructions:**
+Review the goal and the execution history carefully.
+- If the history clearly shows that the goal has been fully achieved, respond with "YES".
+- If the goal has not been met, or if the history is incomplete, respond with "NO".
+
+Do not provide any other explanation or text. Your response must be either "YES" or "NO".

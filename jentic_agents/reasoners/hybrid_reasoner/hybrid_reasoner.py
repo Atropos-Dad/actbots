@@ -18,16 +18,16 @@ from __future__ import annotations
 
 from typing import Any, Optional
 
-from ..communication.hitl.base_intervention_hub import BaseInterventionHub
-from ..memory.scratch_pad import ScratchPadMemory
-from ..platform.jentic_client import JenticClient
-from ..utils.llm import BaseLLM, LiteLLMChatLLM
-from ..utils.logger import get_logger
-from .base_reasoner import ReasoningResult
-from .bullet_list_reasoner import BulletPlanReasoner
-from .freeform_reasoner import FreeformReasoner
-from ..utils.config import get_config
-from ..utils.prompt_loader import load_prompt
+from ...communication.hitl.base_intervention_hub import BaseInterventionHub
+from ...memory.scratch_pad import ScratchPadMemory
+from ...platform.jentic_client import JenticClient
+from ...utils.llm import BaseLLM, LiteLLMChatLLM
+from ...utils.logger import get_logger
+from ..base_reasoner import ReasoningResult
+from ..bullet_list_reasoner.bullet_plan_reasoner import BulletPlanReasoner
+from ..freeform_reasoner.freeform_reasoner import FreeformReasoner
+from ...utils.config import get_config
+from ...utils.prompt_loader import load_prompt
 
 config = get_config()
 logger = get_logger(__name__)
@@ -61,7 +61,7 @@ class HybridReasoner:
             **kwargs
         )
         self.bullet = BulletPlanReasoner(
-            jentic_client=jentic,
+            jentic=jentic,
             memory=memory,
             llm=self.llm,
             intervention_hub=intervention_hub,

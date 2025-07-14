@@ -260,12 +260,12 @@ Ready to help! 🚀"""
                 tool_calls = getattr(result, 'tool_calls', [])
                 iterations = getattr(result, 'iterations', 0)
                 if tool_calls:
-                    description += f"\n\n**Tools Used:** {len(tool_calls)} tool(s) in {iterations} iteration(s)"
-                    tools_list = []
+                    description += "\n\n**Tools used:**"
                     for call in tool_calls:
-                        tool_name = call.get('tool_name', call.get('tool_id', 'Unknown'))
-                        tools_list.append(tool_name)
-                    description += f"\n**Tools:** {', '.join(set(tools_list))}"
+                        # Handle both formatted (from jentic_client.get_executed_tools) and raw formats
+                        tool_name = call.get("name", call.get("tool_name", "Unknown Tool"))
+                        tool_id = call.get("id", call.get("tool_id", "unknown"))
+                        description += f"\n• {tool_name} (ID: {tool_id})"
                 
                 embed = self._create_embed(title, description, 0x27ae60)
                 asyncio.create_task(self._send_message(embed=embed, channel_id=channel_id, mention_users=True))
