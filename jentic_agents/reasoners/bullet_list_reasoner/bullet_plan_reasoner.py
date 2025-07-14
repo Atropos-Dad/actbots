@@ -276,11 +276,23 @@ class BulletPlanReasoner(BaseReasoner):
         else:
             # Ensure result is JSON-serializable even for failed steps
             serializable_result = make_json_serializable(result)
-            updated_step = step.mark_failed(serializable_result)
             logger.warning(f"Step failed: {step.text}")
             
-            history_entry = f"{step.text} -> failed"
-            return state.update_current_step(updated_step).with_history(history_entry).mark_failed()
+            # Extract simple error message for reflection
+            error_msg = str(serializable_result.get("error", serializable_result)) if isinstance(serializable_result, dict) else str(serializable_result)
+            
+            # Try reflection on failed result
+            logger.info("Attempting reflection on failed step result.")
+            success, revised_step = self.reflection_engine.reflect_on_failure(step, error_msg, state)
+            
+            if success and revised_step:
+                logger.info("Step revised after failure, retrying.")
+                return state.update_current_step(revised_step)
+            else:
+                logger.warning("Reflection failed. Step cannot be recovered.")
+                updated_step = step.mark_failed(serializable_result)
+                history_entry = f"{step.text} -> failed"
+                return state.update_current_step(updated_step).with_history(history_entry).mark_failed()
 
     def _handle_step_failure(self, step: Step, error_msg: str, state: ReasonerState) -> ReasonerState:
         """Handle step failure through reflection."""
