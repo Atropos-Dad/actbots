@@ -46,7 +46,6 @@ A **clean, reusable Python library** that lets developers spin up AI agents whos
 │   │   ├── agent_memory.py
 │   │   ├── base_memory.py
 │   │   └── scratch_pad.py
-│   ├── outbox
 │   ├── platform
 │   │   └── jentic_client.py
 │   ├── prompts
