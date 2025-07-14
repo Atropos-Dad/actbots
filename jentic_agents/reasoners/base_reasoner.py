@@ -272,10 +272,19 @@ class BaseReasoner(ABC):
         """
         Universal result creation pattern used by all reasoners.
         """
+        # Use properly formatted tool information from jentic_client
+        formatted_tool_calls = []
+        if hasattr(self, 'jentic_client') and self.jentic_client:
+            executed_tools = self.jentic_client.get_executed_tools()
+            formatted_tool_calls = executed_tools
+        else:
+            # Fallback to raw tool_calls if jentic_client not available
+            formatted_tool_calls = self.tool_calls
+            
         return ReasoningResult(
             final_answer=final_answer,
             iterations=self.iteration_count,
-            tool_calls=self.tool_calls,
+            tool_calls=formatted_tool_calls,
             success=success,
             error_message=error_message
         )

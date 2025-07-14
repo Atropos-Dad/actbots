@@ -144,15 +144,7 @@ class BulletPlanReasoner(BaseReasoner):
 
         # Generate final result
         if state.goal_completed:
-            executed_tools = self.jentic_client.get_executed_tools()
-            if executed_tools:
-                tools_summary = "\n".join([
-                    f"  • {tool['name']} (ID: {tool['id']})"
-                    for tool in executed_tools
-                ])
-                final_answer = f"Goal completed successfully!\n\nTools used:\n{tools_summary}"
-            else:
-                final_answer = "Goal completed successfully!"
+            final_answer = "Goal completed successfully!"
         else:
             final_answer = "Unable to complete goal."
             
