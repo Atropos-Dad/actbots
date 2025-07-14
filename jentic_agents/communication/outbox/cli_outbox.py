@@ -67,6 +67,8 @@ class CLIOutbox(BaseOutbox):
 
             tool_calls = getattr(result, "tool_calls", [])
             iterations = getattr(result, "iterations", 0)
+            cost_stats = getattr(result, "cost_stats", None)
+            
             if tool_calls:
                 success_text.append(
                     f"\nUsed {len(tool_calls)} tool(s) in {iterations} iteration(s):\n",
@@ -75,6 +77,13 @@ class CLIOutbox(BaseOutbox):
                 for i, call in enumerate(tool_calls, 1):
                     tool_name = call.get("tool_name", call.get("tool_id", "Unknown"))
                     success_text.append(f"  {i}. {tool_name}\n", style="dim")
+            
+            # Add cost information if available
+            if cost_stats and cost_stats.get("total_cost", 0) > 0:
+                success_text.append(
+                    f"\nLLM cost: ${cost_stats['total_cost']:.4f} ({int(cost_stats['total_tokens'])} tokens)\n",
+                    style="dim"
+                )
 
             panel = Panel(
                 success_text, title="Success", border_style="green", padding=(1, 2)
