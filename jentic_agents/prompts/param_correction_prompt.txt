@@ -1,15 +1,18 @@
 {
-  "instruction": "Your previous attempt to generate parameters failed because you used memory placeholders that do not exist. Your task is to correct the parameters using ONLY the available memory keys provided.",
+  "instruction": "Your previous attempt to generate parameters failed. Your task is to correct the issue and provide valid parameters.",
   "context": {
-    "failed_parameters": "{failed_params}",
-    "error": "You tried to use a placeholder that is not in the list of available keys.",
+    "error_type": "{error_type}",
+    "error_details": "{error_details}",
+    "failed_parameters": "{failed_parameters}",
+    "required_fields": "{required_fields}",
     "available_memory_keys": "{available_memory_keys}"
   },
   "rules": [
-    "You MUST correct the provided `failed_parameters`.",
-    "You MUST ONLY use placeholders from the `available_memory_keys` list.",
-    "If a value cannot be found in the available memory, you MUST use an empty string `\"\"` or an appropriate null value for that parameter.",
-    "Do NOT re-use the invalid placeholders from the `failed_parameters`.",
-    "Output ONLY the corrected, valid JSON object for the parameters."
+    "If error_type is 'json_error': Your previous response was not valid JSON. Provide a single, valid JSON object with double quotes around all string keys and values.",
+    "If error_type is 'missing_fields': You MUST include ALL required fields listed in `required_fields`. Your previous response was missing some required parameters.",
+    "If error_type is 'memory_placeholder': You used memory placeholders that do not exist. You MUST ONLY use placeholders from the `available_memory_keys` list.",
+    "For any error_type: Output ONLY a valid JSON object with the corrected parameters.",
+    "Do NOT include any explanatory text, markdown formatting, or code blocks - just the raw JSON object.",
+    "If a value cannot be determined, use an empty string \"\" or appropriate null value for that parameter."
   ]
 } 

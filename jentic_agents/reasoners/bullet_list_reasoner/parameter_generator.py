@@ -117,9 +117,11 @@ class ParameterGenerator:
             args = safe_json_loads(args_json)
         except ValueError as e:
             logger.error(f"Failed to parse JSON args: {e}")
-            correction_prompt = (
-                "ERROR: The previous response was not valid JSON. "
-                "Please try again, ensuring your output is a single, valid JSON object with double quotes."
+            correction_prompt = self._build_correction_prompt(
+                error_type='json_error',
+                error_details=str(e),
+                failed_parameters=args_json,
+                required_fields=required_fields
             )
             return None, f"Invalid JSON: {e}", correction_prompt
 
@@ -128,9 +130,11 @@ class ParameterGenerator:
         if missing_fields:
             error = f"Missing required fields: {missing_fields}"
             logger.warning(f"{error}. Re-prompting LLM.")
-            correction_prompt = (
-                f"\n\nIMPORTANT: You MUST include all required fields in the parameters: "
-                f"{', '.join(required_fields)}."
+            correction_prompt = self._build_correction_prompt(
+                error_type='missing_fields',
+                error_details=f"Missing fields: {missing_fields}",
+                failed_parameters=json.dumps(args, indent=2),
+                required_fields=required_fields
             )
             return args, error, correction_prompt
 
@@ -166,6 +170,30 @@ class ParameterGenerator:
         except RuntimeError:
             pass
         return self.llm.chat(messages, **kwargs)
+
+    def _build_correction_prompt(self, error_type: str, error_details: str, failed_parameters: str, required_fields: List[str]) -> str:
+        """Build a correction prompt for parameter validation errors."""
+        correction_template = load_prompt("param_correction_prompt")
+        
+        if isinstance(correction_template, dict):
+            import copy
+            correction_template = copy.deepcopy(correction_template)
+            correction_template.get('context', {}).update({
+                'error_type': error_type,
+                'error_details': error_details,
+                'failed_parameters': failed_parameters,
+                'required_fields': ', '.join(required_fields),
+                'available_memory_keys': ', '.join(self.memory.keys())
+            })
+            return json.dumps(correction_template, ensure_ascii=False)
+        else:
+            return correction_template.format(
+                error_type=error_type,
+                error_details=error_details,
+                failed_parameters=failed_parameters,
+                required_fields=', '.join(required_fields),
+                available_memory_keys=', '.join(self.memory.keys())
+            )
 
     def _add_human_guidance_to_prompt(self, base_prompt: str) -> str:
         """Add recent human guidance from memory to prompts."""
