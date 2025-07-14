@@ -95,14 +95,16 @@ class HybridReasoner:
                 .upper()
             )
             logger.info(f"Task complexity classification response: {response}")
-            is_simple = "SINGLE-STEP" in response
+            # Accept both SINGLE_STEP and SINGLE-STEP (and likewise for MULTI_STEP)
+            is_single_step = any(token in response for token in ["SINGLE_STEP", "SINGLE-STEP"])
+            is_multi_step = any(token in response for token in ["MULTI_STEP", "MULTI-STEP"])
             # Basic validation in case the model returns both keywords
-            if "SINGLE-STEP" in response and "MULTI-STEP" in response:
+            if is_single_step and is_multi_step:
                 logger.warning(
                     "Classifier returned ambiguous response. Defaulting to MULTI-STEP."
                 )
                 return False
-            return is_simple
+            return is_single_step
         except Exception as e:
             logger.warning(
                 f"Complexity classification failed: {e}. Defaulting to complex task (BulletPlan)."

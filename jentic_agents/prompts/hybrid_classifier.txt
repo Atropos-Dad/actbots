@@ -1,8 +1,17 @@
-Please classify the following user request as 'SINGLE-STEP' or 'MULTI-STEP'.
+Please classify the following user request as either 'SINGLE_STEP' or 'MULTI-STEP'.
 
-SINGLE-STEP tasks are direct commands that can likely be completed with one or 2 tool calls (e.g., 'send a message', 'get the weather and then send a message').
-MULTI-STEP tasks require planning, information gathering, or several actions (e.g., 'research X and write a summary in a document', 'book a flight and then a hotel and then send a message').
+- 'SINGLE_STEP' (handled by the Freeform Reasoner): Direct, atomic tasks that can be completed in one or two tool calls, without the need for planning or chaining results. 
+  Examples: 
+    - "Send a message to John"
+    - "Send a New York Times article to a Discord channel"
+    - "Get the weather and post it to Slack"
+
+- 'MULTI-STEP' (handled by the BulletPoint Reasoner): Complex goals that require planning, information gathering, or chaining three or more actions/steps, especially when the output of one step is needed for the next.
+  Examples:
+    - "Research the top 3 AI conferences this year, summarize their topics, and send the summary to my email"
+    - "Find New York Times aricles on technology, summarize into a Trello board and notify me in Discord when done."
+    - "Find the latest sales data, analyze trends, and generate a report"
 
 Request: "{goal}"
 
-Classification: 
+Classification:

@@ -96,7 +96,7 @@ class JenticClient:
             logger.debug(f"_is_async_context check: False, RuntimeError: {e}")
             return False
 
-    async def search_async(self, query: str, top_k: int = 5) -> List[Dict[str, Any]]:
+    async def search_async(self, query: str, top_k: int = 10) -> List[Dict[str, Any]]:
         """
         Async version of search for use in async contexts.
         """
