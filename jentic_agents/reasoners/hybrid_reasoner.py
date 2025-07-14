@@ -24,7 +24,7 @@ from ..platform.jentic_client import JenticClient
 from ..utils.llm import BaseLLM, LiteLLMChatLLM
 from ..utils.logger import get_logger
 from .base_reasoner import ReasoningResult
-from .bullet_list_reasoner import BulletPlanReasoner
+from .bullet_list_reasoner.bullet_plan_reasoner import BulletPlanReasoner
 from .freeform_reasoner import FreeformReasoner
 from ..utils.config import get_config
 from ..utils.prompt_loader import load_prompt

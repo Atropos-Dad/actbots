@@ -48,6 +48,7 @@ from jentic_agents.agents.simple_ui_agent import SimpleUIAgent
 from jentic_agents.communication.controllers.cli_controller import CLIController
 from jentic_agents.communication.inbox.cli_inbox import CLIInbox
 from jentic_agents.communication.controllers.discord_controller import DiscordController
+from jentic_agents.reasoners.bullet_list_reasoner.bullet_plan_reasoner import BulletPlanReasoner
 
 logger = get_logger(__name__)
 
@@ -87,7 +88,7 @@ def main():
             agent.spin()
         elif args.mode == "cli":
             controller = CLIController()
-            reasoner = HybridReasoner(
+            reasoner = BulletPlanReasoner(
                 jentic=jentic_client,
                 memory=memory,
                 llm=llm_wrapper,
@@ -102,7 +103,7 @@ def main():
             agent.spin()
         elif args.mode == "discord":
             controller, bot, discord_token = DiscordController.create_controller("discord")
-            reasoner = HybridReasoner(
+            reasoner = BulletPlanReasoner(
                 jentic=jentic_client,
                 memory=memory,
                 llm=llm_wrapper,

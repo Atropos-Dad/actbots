@@ -66,6 +66,15 @@ llm_provider = "gemini"
 llm_model = "gemini-2.5-flash"
 embed_model = "text-embedding-3-small"
 
+[tool.actbots.reasoner.bullet_plan]
+max_reflection_attempts = 3
+search_top_k = 10
+max_iterations = 20
+llm_timeout_seconds = 30
+parameter_generation_retries = 3
+enable_caching = true
+log_level = "INFO"
+
 [tool.actbots.discord]
 enabled = true
 target_user_id = 1343280955263160424

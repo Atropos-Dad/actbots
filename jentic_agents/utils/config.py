@@ -62,6 +62,34 @@ def get_discord_config() -> Dict[str, Any]:
     return config.get("discord", {})
 
 
+def get_bullet_plan_config() -> Dict[str, Any]:
+    """Return the bullet plan reasoner config with defaults."""
+    config = _load_config()
+    bullet_plan_config = config.get("reasoner", {}).get("bullet_plan", {})
+    
+    # Default configuration values
+    defaults = {
+        "max_reflection_attempts": 3,
+        "search_top_k": 10,
+        "max_iterations": 20,
+        "llm_timeout_seconds": 30,
+        "parameter_generation_retries": 3,
+        "enable_caching": True,
+        "log_level": "INFO",
+    }
+    
+    # Merge with defaults
+    merged_config = defaults.copy()
+    merged_config.update(bullet_plan_config)
+    return merged_config
+
+
+def get_bullet_plan_config_value(key: str, default=None) -> Any:
+    """Get a specific bullet plan config value with fallback to default."""
+    bullet_config = get_bullet_plan_config()
+    return bullet_config.get(key, default)
+
+
 def validate_api_keys():
     """Validate required API keys are present."""
     if not os.getenv("JENTIC_API_KEY"):
