@@ -1,6 +1,7 @@
 # ActBots: A Framework for Self-Healing AI Agents
 
-A **clean, modular Python framework** for building robust, autonomous AI agents. ActBots provides a powerful reasoning engine that can dynamically plan, execute, and **reflect on failures** to heal itself, ensuring reliable task completion using the Jentic tool platform.
+A **clean, modular Python framework** for building robust, autonomous AI agents. ActBots provides a reasoning engine that can dynamically plan, execute, and **reflect on failures** to heal itself, ensuring reliable task completion using the provided tool platform. 
+Jentic is prepackaged as the default tool platform.
 
 ## 🎯 Project Goals
 
@@ -38,6 +39,10 @@ jentic_agents/
 ├─ inbox/                              # Goal/task delivery systems
 │   ├─ base_inbox.py                   # Abstract inbox interface
 │   └─ cli_inbox.py                    # CLI input inbox
+│
+├─ outbox/                             # Result delivery systems
+│   ├─ base_outbox.py                  # Abstract outbox interface
+│   └─ cli_outbox.py                   # CLI output outbox
 
 ```
 
@@ -72,6 +77,13 @@ Goal delivery systems that feed tasks to the agent.
 - **`BaseInbox`**: An abstract interface for receiving goals.
 - **`CLIInbox`**: An implementation that gets goals from interactive command-line input.
 
+### Outbox
+Result delivery systems that decouple the agent from the output mechanism.
+- **`BaseOutbox`**: An abstract interface for delivering the final result.
+- **`CLIOutbox`**: An implementation that formats and prints the result to the command line.
+
+This pattern makes it easy to integrate the agent's output with any downstream system. For example, to send results to Slack, you would simply create a `SlackOutbox` class that implements the `BaseOutbox` contract and uses the Slack API in its `send` method. The core agent logic would not need to change.
+
 ## 🚀 Quick Start
 
 ### Installation
@@ -81,14 +93,11 @@ Goal delivery systems that feed tasks to the agent.
 git clone <repository-url>
 cd actbots
 
-# Install dependencies using PDM
-pdm install
+# Install dependencies
+make install
 
-# Run tests
-pdm run test
-
-# Check code quality
-pdm run lint
+# Activate the virtual environment
+source .venv/bin/activate
 ```
 
 ### Configuration
@@ -125,6 +134,7 @@ from jentic_agents.reasoners.rewoo_reasoner.core import ReWOOReasoner
 from jentic_agents.platform.jentic_client import JenticClient
 from jentic_agents.agents.interactive_cli_agent import InteractiveCLIAgent
 from jentic_agents.inbox.cli_inbox import CLIInbox
+from jentic_agents.outbox.cli_outbox import CLIOutbox
 # 1. Set up the components
 llm_wrapper = LiteLLMChatLLM(model='claude-sonnet-4-20250514')
 memory = ScratchPadMemory()
@@ -132,6 +142,7 @@ jentic_client = JenticClient(api_key='Jentic API KEY')
 jentic_tools = JenticToolInterface(client=jentic_client)
 
 inbox = CLIInbox()
+outbox = CLIOutbox()
 
 # 2. Instantiate the Reasoner
 reasoner = ReWOOReasoner(
@@ -144,6 +155,7 @@ agent = InteractiveCLIAgent(
     reasoner=reasoner,
     memory=memory,
     inbox=inbox,
+    outbox=outbox,
     jentic_client=jentic_client
 )
 agent.spin()  # Start the interactive loop
@@ -159,4 +171,3 @@ agent.spin()  # Start the interactive loop
 
 ---
 
-**Built for a new generation of resilient, modular, and truly autonomous AI agents.**

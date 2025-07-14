@@ -1,32 +1,11 @@
 #!/usr/bin/env python3
-"""
-ActBots Live Demo with Jentic and OpenAI
-
-This script demonstrates the ActBots agent working with live Jentic services
-and a real OpenAI language model.
-
---------------------------------------------------------------------------
-SETUP INSTRUCTIONS:
-
-1. Create a `.env` file in this directory by copying `.env.template`.
-
-2. Add your API keys to the `.env` file:
-   - JENTIC_API_KEY: Your API key for the Jentic platform.
-   - OPENAI_API_KEY: Your API key for OpenAI.
-
-3. Make sure you have installed all dependencies:
-   `make install`
-
-4. Run the demo:
-   `python main.py`
---------------------------------------------------------------------------
-"""
 import logging
 import os
 import sys
 
 from dotenv import load_dotenv
 
+from jentic_agents.outbox import CLIOutbox
 from jentic_agents.reasoners import ReWOOReasoner
 
 # Add the package to the path
@@ -40,8 +19,6 @@ from jentic_agents.platform.jentic_tool_iface import JenticToolInterface
 # Local LiteLLM wrapper
 from jentic_agents.utils.llm import LiteLLMChatLLM
 
-# Prefix to detect Gemini provider
-_GEMINI_PREFIX = "gemini"
 
 def main():
     """Run the live demo."""
@@ -85,12 +62,14 @@ def main():
         print('Initializing JenticReasoner')
         # 3. Initialize Memory and Inbox
         inbox = CLIInbox(prompt="Enter your goal: ")
+        outbox = CLIOutbox()
 
         # 4. Create and run the Agent
         agent = InteractiveCLIAgent(
             reasoner=reasoner,
             memory=memory,
             inbox=inbox,
+            outbox=outbox,
             jentic_client=jentic_client,
         )
 
