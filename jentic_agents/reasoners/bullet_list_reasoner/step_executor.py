@@ -5,6 +5,7 @@ from typing import Any, Dict
 
 from ...utils.logger import get_logger
 from ...utils.prompt_loader import load_prompt
+from ...utils.parsing_helpers import make_json_serializable
 from .reasoner_state import Step, ReasonerState
 
 logger = get_logger(__name__)
@@ -123,6 +124,9 @@ class StepExecutor:
             all_keys = self.memory.keys()
             for k in all_keys:
                 v = self.memory.retrieve(k)
+                # Ensure value is JSON-serializable
+                v = make_json_serializable(v)
+                
                 if k in referenced_keys:
                     # Include full value for referenced keys
                     mem_payload[k] = v

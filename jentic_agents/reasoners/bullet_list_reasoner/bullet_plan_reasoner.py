@@ -3,12 +3,13 @@
 from typing import Any, Dict, List, Optional
 from collections import deque
 import json
+import re
 
 from ..base_reasoner import BaseReasoner, ReasoningResult, StepType
 from ...utils.config import get_bullet_plan_config_value
 from ...utils.logger import get_logger
 from ...utils.prompt_loader import load_prompt
-from ...utils.parsing_helpers import extract_fenced_code
+from ...utils.parsing_helpers import extract_fenced_code, make_json_serializable
 
 from .reasoner_state import ReasonerState, Step, StepStatus
 from .plan_parser import BulletPlanParser
@@ -85,8 +86,11 @@ class BulletPlanReasoner(BaseReasoner):
         
         logger.info(f"Starting reasoning for goal: {goal} | Max iterations: {max_iterations}")
         
-        # Initialize state
+        # Initialize state  
         state = ReasonerState(goal=goal)
+        
+        # Clear any previously tracked tools for this new goal
+        self.jentic_client.clear_executed_tools()
         
         iteration = 0
         while iteration < max_iterations:
@@ -141,11 +145,27 @@ class BulletPlanReasoner(BaseReasoner):
             iteration += 1
 
         # Generate final result
-        final_answer = "Goal completed." if state.goal_completed else "Unable to complete goal."
+        if state.goal_completed:
+            executed_tools = self.jentic_client.get_executed_tools()
+            if executed_tools:
+                tools_summary = "\n".join([
+                    f"  • {tool['name']} (ID: {tool['id']})"
+                    for tool in executed_tools
+                ])
+                final_answer = f"Goal completed successfully!\n\nTools used:\n{tools_summary}"
+            else:
+                final_answer = "Goal completed successfully!"
+        else:
+            final_answer = "Unable to complete goal."
+            
         success = state.goal_completed and not state.failed
         error_message = None if success else "Max iterations reached or failure during steps"
         
         logger.info(f"Reasoning loop complete. Success: {success}")
+        if state.goal_completed:
+            executed_tools = self.jentic_client.get_executed_tools()
+            if executed_tools:
+                logger.info(f"Tools executed: {[f'{tool['name']} ({tool['id']})' for tool in executed_tools]}")
         
         return self.create_reasoning_result(
             final_answer=final_answer,
@@ -204,18 +224,19 @@ class BulletPlanReasoner(BaseReasoner):
             tool_id = self.tool_selector.select_tool(step, state)
             logger.info(f"Tool selected: {tool_id}")
             
-            # Store tool_id in memory if requested
+            # Store tool_id in memory if requested  
+            result = {"id": tool_id}
             if step.store_key:
                 self.memory.set(
                     key=step.store_key,
-                    value={"id": tool_id},
+                    value=result,
                     description=f"Tool ID for step '{step.text}'"
                 )
-            return {"tool_id": tool_id}
+            return result
             
         elif step_type in ["EXECUTE"]:
-            # Tool execution
-            tool_id = self._resolve_tool_id(step, state)
+            # Tool execution - use same tool selection logic as SEARCH
+            tool_id = self.tool_selector.select_tool(step, state)
             tool_info = self.jentic_client.load(tool_id)
             params = self.parameter_generator.generate_and_validate_parameters(tool_id, tool_info, state)
             return self.step_executor.execute_tool_step(tool_id, params, step)
@@ -231,21 +252,6 @@ class BulletPlanReasoner(BaseReasoner):
             params = self.parameter_generator.generate_and_validate_parameters(tool_id, tool_info, state)
             return self.step_executor.execute_tool_step(tool_id, params, step)
 
-    def _resolve_tool_id(self, step: Step, state: ReasonerState) -> str:
-        """Resolve tool ID from step or memory."""
-        if step.tool_id:
-            return step.tool_id
-            
-        if hasattr(step, 'load_from_store') and step.load_from_store:
-            mem_key = step.load_from_store.get('operation')
-            if mem_key and self.memory.has(mem_key):
-                stored = self.memory.retrieve(mem_key)
-                if isinstance(stored, dict) and "id" in stored:
-                    return stored['id']
-        
-        # Fallback to tool selection
-        return self.tool_selector.select_tool(step, state)
-
     def _process_step_result(self, step: Step, result: Any, state: ReasonerState) -> ReasonerState:
         """Process step execution result and update state."""
         logger.info("=== OBSERVATION PHASE ===")
@@ -254,21 +260,25 @@ class BulletPlanReasoner(BaseReasoner):
         success = self._is_result_successful(result)
         
         if success:
-            updated_step = step.mark_done(result)
+            # Ensure result is JSON-serializable before storing
+            serializable_result = make_json_serializable(result)
+            updated_step = step.mark_done(serializable_result)
             logger.info(f"Step completed successfully: {step.text}")
             
             # Store result in memory if requested
             if step.store_key:
                 self.memory.set(
                     key=step.store_key,
-                    value=result,
+                    value=serializable_result,
                     description=f"Result from step '{step.text}'"
                 )
             
             history_entry = f"{step.text} -> done"
             return state.update_current_step(updated_step).with_history(history_entry).advance_plan()
         else:
-            updated_step = step.mark_failed(result)
+            # Ensure result is JSON-serializable even for failed steps
+            serializable_result = make_json_serializable(result)
+            updated_step = step.mark_failed(serializable_result)
             logger.warning(f"Step failed: {step.text}")
             
             history_entry = f"{step.text} -> failed"
@@ -291,26 +301,48 @@ class BulletPlanReasoner(BaseReasoner):
     def _evaluate_goal_completion(self, state: ReasonerState) -> bool:
         """Evaluate if the goal has been completed based on current state."""
         try:
+            # Simple heuristic: if plan is empty and we've made progress, goal is likely complete
+            if not state.plan and hasattr(state, 'history') and state.history:
+                return True
+            
             # Use LLM to evaluate goal completion
             evaluation_prompt = load_prompt('goal_evaluation')
+            
+            # Build robust evaluation context
+            completed_steps = []
+            for step in state.plan:
+                if hasattr(step.status, 'name') and step.status.name == "DONE":
+                    completed_steps.append(step.text)
+                elif step.status == StepStatus.DONE:
+                    completed_steps.append(step.text)
+            
+            current_observations = []
+            if hasattr(state, 'history') and state.history:
+                current_observations = state.history[-5:]
+            
             evaluation_context = {
                 'goal': state.goal,
-                'completed_steps': [step.description for step in state.plan if step.status == StepStatus.DONE],
-                'current_observations': state.history[-5:] if state.history else [],
-                'total_steps': len(state.plan)
+                'completed_steps': completed_steps,
+                'current_observations': current_observations,
+                'total_steps': len(state.plan),
+                'history': current_observations  # Alternative field name
             }
             
-            response = self.llm.generate(
-                prompt=evaluation_prompt.format(**evaluation_context),
-                max_tokens=100
-            )
+            if isinstance(evaluation_prompt, dict):
+                evaluation_prompt["inputs"].update(evaluation_context)
+                prompt = json.dumps(evaluation_prompt, ensure_ascii=False)
+            else:
+                prompt = evaluation_prompt.format(**evaluation_context)
+            
+            response = self._safe_llm_call([{"role": "user", "content": prompt}])
             
             # Parse response for completion status
             return 'yes' in response.lower() or 'completed' in response.lower()
             
         except Exception as e:
             self.logger.error(f"Error evaluating goal completion: {e}")
-            return False
+            # Fallback: if plan is empty, assume goal is complete
+            return not state.plan
 
     def _generate_plan_text(self, goal: str, context: Dict[str, Any]) -> str:
         """Generate plan text using LLM for compatibility methods."""
@@ -324,10 +356,13 @@ class BulletPlanReasoner(BaseReasoner):
                 'memory_items': context.get('memory_items', [])
             }
             
-            response = self.llm.generate(
-                prompt=bullet_plan_prompt.format(**plan_context),
-                max_tokens=1000
-            )
+            if isinstance(bullet_plan_prompt, dict):
+                bullet_plan_prompt["inputs"].update(plan_context)
+                prompt = json.dumps(bullet_plan_prompt, ensure_ascii=False)
+            else:
+                prompt = bullet_plan_prompt.format(**plan_context)
+            
+            response = self._safe_llm_call([{"role": "user", "content": prompt}])
             
             return response
             
@@ -347,9 +382,7 @@ class BulletPlanReasoner(BaseReasoner):
             return bool(inner)
         return getattr(result, "success", True)
 
-    # ========================================================================
     # BaseReasoner compatibility methods
-    # ========================================================================
 
     def plan(self, goal: str, context: Dict[str, Any]) -> str:
         """BaseReasoner compatibility - generate plan description."""

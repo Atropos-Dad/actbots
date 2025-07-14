@@ -49,6 +49,7 @@ class ToolSelector:
 
     def _check_execute_pattern(self, step: Step) -> Optional[str]:
         """Check if step follows 'Execute <memory_key>' pattern and return cached tool_id."""
+        # Pattern 1: Simple "execute memory_key" format
         exec_match = re.match(r"execute\s+([\w\-_]+)", step.text.strip(), re.IGNORECASE)
         if exec_match:
             mem_key = exec_match.group(1)
@@ -57,6 +58,17 @@ class ToolSelector:
                 if isinstance(stored, dict) and "id" in stored:
                     logger.info(f"Reusing tool_id from memory key '{mem_key}': {stored['id']}")
                     return stored["id"]
+        
+        # Pattern 2: "Execute the 'memory_key'" format  
+        exec_match_quoted = re.search(r"execute\s+(?:the\s+)?['\"]([^'\"]+)['\"]", step.text.strip(), re.IGNORECASE)
+        if exec_match_quoted:
+            mem_key = exec_match_quoted.group(1)
+            if mem_key in self.memory.keys():
+                stored = self.memory.retrieve(mem_key)
+                if isinstance(stored, dict) and "id" in stored:
+                    logger.info(f"Reusing tool_id from memory key '{mem_key}' (quoted format): {stored['id']}")
+                    return stored["id"]
+        
         return None
 
     def _build_search_query(self, step: Step, state: ReasonerState) -> str:
@@ -127,7 +139,7 @@ class ToolSelector:
         logger.info(f"Tools returned from keyword search:\n{candidate_block}")
 
         # Fill the prompt
-        prompt = self._build_selection_prompt(step, state, candidate_block)
+        prompt = self._build_selection_prompt(step, state, candidate_block, hits)
         raw_reply = self._safe_llm_call([{"role": "user", "content": prompt}]).strip()
         logger.debug("LLM tool-selection reply: %s", raw_reply)
 
@@ -159,8 +171,14 @@ class ToolSelector:
             numbered_lines.append(f"{idx}. {display} — {desc}")
         return numbered_lines
 
-    def _build_selection_prompt(self, step: Step, state: ReasonerState, candidate_block: str) -> str:
+    def _build_selection_prompt(self, step: Step, state: ReasonerState, candidate_block: str, hits: List[Dict[str, Any]] = None) -> str:
         """Build the tool selection prompt."""
+        # Generate context analysis with hits for dynamic API domain detection
+        context_analysis = self._analyze_context(step, state, hits)
+        
+        # Generate workflow state
+        workflow_state = self._build_workflow_state(step, state)
+        
         prompt_tpl = load_prompt("select_tool")
         if isinstance(prompt_tpl, dict):
             prompt_tpl["inputs"].update({
@@ -168,6 +186,8 @@ class ToolSelector:
                 "plan_step": step.text,
                 "memory_keys": ", ".join(self.memory.keys()),
                 "tool_candidates": candidate_block,
+                "context_analysis": context_analysis,
+                "workflow_state": workflow_state,
             })
             prompt = json.dumps(prompt_tpl, ensure_ascii=False)
         else:
@@ -176,8 +196,85 @@ class ToolSelector:
                 plan_step=step.text,
                 memory_keys=", ".join(self.memory.keys()),
                 tool_candidates=candidate_block,
+                context_analysis=context_analysis,
+                workflow_state=workflow_state,
             )
         return prompt
+
+    def _analyze_context(self, step: Step, state: ReasonerState, hits: List[Dict[str, Any]] = None) -> str:
+        """Analyze the context to provide structured information for tool selection."""
+        # Extract action type from step text
+        action_type = "unknown"
+        step_lower = step.text.lower()
+        
+        if any(word in step_lower for word in ["send", "post", "create", "add"]):
+            action_type = "create/send"
+        elif any(word in step_lower for word in ["get", "retrieve", "fetch", "find", "search"]):
+            action_type = "read/search"
+        elif any(word in step_lower for word in ["update", "modify", "edit", "change"]):
+            action_type = "update"
+        elif any(word in step_lower for word in ["delete", "remove", "ban"]):
+            action_type = "delete"
+        
+        # Extract API domain dynamically from available tools
+        api_domain = "unknown"
+        confidence = "low"
+        
+        if hits:
+            # Check which API domains are mentioned in step text
+            for hit in hits:
+                api_name = (
+                    hit.get("api_name", "").lower()
+                    if isinstance(hit, dict)
+                    else getattr(hit, "api_name", "").lower()
+                )
+                if api_name:
+                    domain_part = api_name.split(".")[0]
+                    if (api_name in step_lower) or (domain_part in step_lower):
+                        api_domain = domain_part
+                        confidence = "high"
+                        break
+            
+            # If no direct mention, try to infer from most common domain in hits
+            if api_domain == "unknown" and hits:
+                domain_counts = {}
+                for hit in hits:
+                    api_name = (
+                        hit.get("api_name", "")
+                        if isinstance(hit, dict)
+                        else getattr(hit, "api_name", "")
+                    )
+                    if api_name:
+                        domain = api_name.split(".")[0].lower()
+                        domain_counts[domain] = domain_counts.get(domain, 0) + 1
+                
+                if domain_counts:
+                    api_domain = max(domain_counts, key=domain_counts.get)
+                    confidence = "medium"
+        
+        # Determine workflow complexity
+        workflow_complexity = "single-step" if len(state.plan) <= 2 else "multi-step"
+        
+        # Available data from memory
+        available_data = list(self.memory.keys()) if self.memory.keys() else ["none"]
+        
+        return f"action_type: {action_type}, api_domain: {api_domain} ({confidence} confidence), workflow_complexity: {workflow_complexity}, available_data: {', '.join(available_data)}"
+
+    def _build_workflow_state(self, step: Step, state: ReasonerState) -> str:
+        """Build workflow state information for tool selection."""
+        # Previous steps
+        completed_steps = [s.text for s in state.plan if s.status.name == "DONE"]
+        current_step_index = state.plan.index(step) if step in state.plan else 0
+        
+        # Memory contents summary
+        memory_summary = f"{len(self.memory.keys())} items stored" if self.memory.keys() else "empty"
+        
+        # Step dependencies (basic analysis)
+        dependencies = "none"
+        if step.store_key:
+            dependencies = f"stores result as '{step.store_key}'"
+        
+        return f"previous_steps: {len(completed_steps)} completed, memory: {memory_summary}, step_position: {current_step_index + 1}/{len(state.plan)}, dependencies: {dependencies}"
 
     def _parse_selection_response(self, response: str, hits: List[Dict[str, Any]]) -> Optional[str]:
         """Parse LLM response to extract selected tool ID."""

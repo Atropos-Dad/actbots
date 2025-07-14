@@ -18,8 +18,8 @@ import re
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional
 
-from .base_reasoner import BaseReasoner, ReasoningResult
-from ..utils.logger import get_logger
+from ..base_reasoner import BaseReasoner, ReasoningResult
+from ...utils.logger import get_logger
 
 logger = get_logger(__name__)
 

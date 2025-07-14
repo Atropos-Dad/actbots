@@ -4,7 +4,7 @@ Unit tests for StandardReasoner.
 
 from unittest.mock import Mock, patch
 
-from ..reasoners.standard_reasoner import StandardReasoner
+from ..reasoners.standard_reasoner.standard_reasoner import StandardReasoner
 from ..platform.jentic_client import JenticClient
 from ..utils.llm import BaseLLM
 

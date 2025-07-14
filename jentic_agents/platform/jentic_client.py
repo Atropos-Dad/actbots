@@ -29,6 +29,7 @@ class JenticClient:
         """
         self.api_key = api_key or os.getenv("JENTIC_API_KEY")
         self._tool_metadata_cache: Dict[str, Dict[str, Any]] = {}
+        self._executed_tools: List[Dict[str, Any]] = []  # Track successfully executed tools
 
         # Lazily-import the official Jentic SDK.  We do this here (instead of at
         # module import-time) so unit-tests can monkey-patch the import path.
@@ -199,6 +200,8 @@ class JenticClient:
                 self._tool_metadata_cache[tool_id] = {
                     "type": formatted_tool["type"],
                     "api_name": formatted_tool["api_name"],
+                    "name": formatted_tool["name"],
+                    "description": formatted_tool["description"],
                 }
 
         return formatted_results[:top_k]
@@ -338,18 +341,54 @@ class JenticClient:
         tool_meta = self._tool_metadata_cache.get(tool_id)
         if not tool_meta:
             raise ValueError(f"Tool '{tool_id}' not found in cache. Must be discovered via search() first.")
-        
+
         try:
             if tool_meta["type"] == "workflow":
                 result = await self._sdk_client.execute_workflow(tool_id, params)
             else:
                 result = await self._sdk_client.execute_operation(tool_id, params)
 
+            # Get complete tool info for better tracking (load the full metadata)
+            try:
+                complete_tool_info = await self.load_async(tool_id)
+                self._track_successful_execution(tool_id, complete_tool_info)
+            except Exception:
+                # Fallback to cached metadata if load fails
+                self._track_successful_execution(tool_id, tool_meta)
+
             return {"status": "success", "result": result}
 
         except Exception as exc:
             logger.error("Jentic execution failed for tool '%s': %s", tool_id, exc)
             raise
+
+    def _track_successful_execution(self, tool_id: str, tool_meta: Dict[str, Any]) -> None:
+        """Track a successfully executed tool."""
+        # Use the actual tool name/description without transformation
+        tool_name = (
+            tool_meta.get("name", "") or
+            tool_meta.get("description", "") or 
+            tool_meta.get("operationId", "") or
+            tool_meta.get("summary", "") or
+            f"Tool {tool_id}"
+        )
+        
+        self._executed_tools.append({
+            "id": tool_id,
+            "name": tool_name,
+            "type": tool_meta.get("type", "unknown")
+        })
+        
+        logger.debug(f"Tracked successful execution: {tool_name} ({tool_id})")
+
+    def get_executed_tools(self) -> List[Dict[str, Any]]:
+        """Get list of successfully executed tools in this session."""
+        return self._executed_tools.copy()
+
+    def clear_executed_tools(self) -> None:
+        """Clear the list of executed tools (useful for starting a new goal)."""
+        self._executed_tools.clear()
+        logger.debug("Cleared executed tools tracking")
 
     def execute(self, tool_id: str, params: Dict[str, Any]) -> Dict[str, Any]:
         """
@@ -403,6 +442,9 @@ class JenticClient:
                 exec_coro = self._sdk_client.execute_operation(tool_id, params)
 
             result = self._sync(exec_coro)
+
+            # Track successful execution
+            self._track_successful_execution(tool_id, tool_meta)
 
             return {"status": "success", "result": result}
 
