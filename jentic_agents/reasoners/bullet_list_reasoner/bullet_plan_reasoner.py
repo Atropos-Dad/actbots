@@ -1,9 +1,7 @@
 """Refactored BulletPlanReasoner - Component-based orchestrator."""
 
 from typing import Any, Dict, List, Optional
-from collections import deque
 import json
-import re
 
 from ..base_reasoner import BaseReasoner, ReasoningResult, StepType
 from ...utils.config import get_bullet_plan_config_value

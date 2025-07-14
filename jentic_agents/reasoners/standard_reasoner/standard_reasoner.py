@@ -3,7 +3,6 @@ Standard reasoning implementation using ReAct pattern with Jentic SDK integratio
 """
 
 from typing import Any, Dict, List, Optional
-import json
 
 from ..base_reasoner import BaseReasoner, ReasoningResult
 from ...utils.logger import get_logger

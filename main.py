@@ -44,11 +44,8 @@ from jentic_agents.platform.jentic_client import JenticClient
 from jentic_agents.utils.llm import LiteLLMChatLLM
 from jentic_agents.reasoners.hybrid_reasoner.hybrid_reasoner import HybridReasoner
 from jentic_agents.agents.interactive_cli_agent import InteractiveCLIAgent
-from jentic_agents.agents.simple_ui_agent import SimpleUIAgent
 from jentic_agents.communication.controllers.cli_controller import CLIController
-from jentic_agents.communication.inbox.cli_inbox import CLIInbox
 from jentic_agents.communication.controllers.discord_controller import DiscordController
-from jentic_agents.reasoners.bullet_list_reasoner.bullet_plan_reasoner import BulletPlanReasoner
 
 logger = get_logger(__name__)
 
