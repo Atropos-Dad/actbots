@@ -355,24 +355,11 @@ class BaseReasoner(ABC):
             self.jentic_client.clear_executed_tools()
         logger.debug("Reasoner state reset")
         
-    def load_prompt(self, prompt_name: str) -> str:
-        """Load prompt template from prompts directory with caching."""
-        if prompt_name in self._prompt_cache:
-            return self._prompt_cache[prompt_name]
-            
-        # Get the path to the system_prompts directory
-        current_dir = os.path.dirname(os.path.abspath(__file__))
-        prompts_dir = os.path.join(os.path.dirname(current_dir), "prompts", "system_prompts")
-        prompt_file = os.path.join(prompts_dir, f"{prompt_name}.txt")
-        
-        try:
-            with open(prompt_file, 'r', encoding='utf-8') as f:
-                prompt_template = f.read().strip()
-            self._prompt_cache[prompt_name] = prompt_template
-            return prompt_template
-        except FileNotFoundError as e:
-            logger.error(f"Failed to load prompt '{prompt_name}': {e}")
-            raise RuntimeError(f"Could not load prompt file: {prompt_name}.txt")
+    def load_prompt(self, prompt_name: str):
+        """Unified prompt loader – delegates to utils.prompt_loader.load_prompt, 
+        ensuring a single cache location for the entire application."""
+        from ..utils.prompt_loader import load_prompt as _load
+        return _load(prompt_name)
 
     # ========================================================================
     # NEW SHARED HIGH-LEVEL HELPERS (deduplicated from concrete reasoners)

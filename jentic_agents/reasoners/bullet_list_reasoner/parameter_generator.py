@@ -26,6 +26,25 @@ class ParameterGenerator:
         logger.info(f"Generating parameters for tool: {tool_id}")
         
         required_fields = tool_info.get("required", [])
+
+        # ------------------------------------------------------------------
+        # FAST-PATH: if all required parameters already exist in memory, build
+        # the argument dict directly and skip the expensive LLM call.
+        # ------------------------------------------------------------------
+        if required_fields:
+            auto_args: Dict[str, Any] = {}
+            all_present = True
+            for field in required_fields:
+                if self.memory.has(field) if hasattr(self.memory, "has") else field in self.memory.keys():
+                    auto_args[field] = self.memory.retrieve(field)
+                else:
+                    all_present = False
+                    break
+
+            if all_present:
+                logger.info("ParameterGenerator: satisfied all required parameters from memory; skipping LLM generation.")
+                return auto_args
+        
         initial_prompt = self._prepare_param_generation_prompt(tool_id, tool_info, state)
         
         last_error = None
