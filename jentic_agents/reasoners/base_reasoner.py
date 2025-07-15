@@ -195,31 +195,11 @@ class BaseReasoner(ABC):
     # ========================================================================
     
     def safe_llm_call(self, messages: List[Dict[str, str]], **kwargs) -> str:
+        """Central wrapper that delegates to the shared utils.llm.safe_llm_call so
+        every call benefits from caching and proper async-handling.
         """
-        Call LLM in async-safe way. Prevents Discord bot freezing.
-        """
-        logger = get_logger(__name__)
-        timeout_seconds = kwargs.pop('timeout', 60)  # Default 60 second timeout
-        
-        try:
-            import asyncio
-            loop = asyncio.get_running_loop()
-            if loop.is_running():
-                import concurrent.futures
-                with concurrent.futures.ThreadPoolExecutor() as executor:
-                    future = executor.submit(self.llm.chat, messages, **kwargs)
-                    try:
-                        return future.result(timeout=timeout_seconds)
-                    except concurrent.futures.TimeoutError:
-                        logger.error(f"LLM call timed out after {timeout_seconds} seconds")
-                        raise RuntimeError(f"LLM call timed out after {timeout_seconds} seconds")
-        except RuntimeError:
-            pass
-        
-        # For synchronous calls, we can't easily add timeout without more complex threading
-        # But most timeouts happen in async contexts (Discord)
-        logger.debug("Making synchronous LLM call")
-        return self.llm.chat(messages, **kwargs)
+        from ..utils.llm import safe_llm_call as _shared_safe_llm_call
+        return _shared_safe_llm_call(self.llm, messages, **kwargs)
     
     def execute_tool_safely(self, tool_id: str, params: Dict[str, Any]) -> Dict[str, Any]:
         """

@@ -36,6 +36,9 @@ class LiteLLMChatLLM(BaseLLM):
         temperature: float = 0.2,
         max_tokens: int | None = None,
         enable_cost_tracking: bool = True,
+        # New parameters for caching
+        enable_cache: bool = True,
+        cache_size: int = 512,
     ) -> None:
         import litellm
 
@@ -48,6 +51,12 @@ class LiteLLMChatLLM(BaseLLM):
         self.enable_cost_tracking = enable_cost_tracking
         self._client = litellm
         self._logger = logging.getLogger(__name__)
+
+        # Caching state
+        from collections import OrderedDict
+        self._cache_enabled = enable_cache
+        self._cache_max_size = cache_size
+        self._response_cache: "OrderedDict[str, str]" = OrderedDict()
         
         # Cost tracking state
         self._total_calls = 0
@@ -55,6 +64,31 @@ class LiteLLMChatLLM(BaseLLM):
         self._total_tokens = 0
 
     def chat(self, messages: List[Dict[str, str]], **kwargs) -> str:
+        # ------------------------------------------------------------------
+        # Build a stable cache key
+        # ------------------------------------------------------------------
+        temperature = kwargs.get("temperature", self.temperature)
+        max_tokens = kwargs.get("max_tokens", self.max_tokens)
+
+        cache_key = None
+        if self._cache_enabled:
+            import json, hashlib
+            try:
+                # JSON-serialize the messages deterministically
+                canonical = json.dumps(messages, sort_keys=True, ensure_ascii=False)
+                key_str = f"{self.model}|{temperature}|{max_tokens}|{canonical}"
+                cache_key = hashlib.sha256(key_str.encode("utf-8")).hexdigest()
+
+                if cache_key in self._response_cache:
+                    # Move to end to mark as recently used (LRU)
+                    cached = self._response_cache.pop(cache_key)
+                    self._response_cache[cache_key] = cached
+                    self._logger.debug("LLM cache hit – model=%s key=%s", self.model, cache_key[:8])
+                    return cached
+            except Exception as e:
+                # Fail gracefully – fall back to live call
+                self._logger.debug("Could not build cache key: %s", e)
+
         start_time = time.time()
         
         try:
@@ -66,6 +100,13 @@ class LiteLLMChatLLM(BaseLLM):
             )
             
             content = resp.choices[0].message.content or ""
+
+            # Store in cache (after successful call)
+            if self._cache_enabled and cache_key:
+                # Enforce max size (LRU eviction)
+                if len(self._response_cache) >= self._cache_max_size:
+                    self._response_cache.popitem(last=False)  # Remove oldest
+                self._response_cache[cache_key] = content
             
             # Track cost if enabled
             if self.enable_cost_tracking:
@@ -132,3 +173,38 @@ class LiteLLMChatLLM(BaseLLM):
         self._total_calls = 0
         self._total_cost = 0.0
         self._total_tokens = 0
+
+
+# ---------------------------------------------------------------------------
+# Convenience wrapper replicating legacy safe_llm_call behaviour but centralised
+# ---------------------------------------------------------------------------
+
+import concurrent.futures
+import asyncio
+from typing import Any
+
+
+def safe_llm_call(
+    llm: BaseLLM,
+    messages: List[Dict[str, str]],
+    *,
+    timeout: int = 60,
+    **kwargs: Any,
+) -> str:
+    """Thread-safe, timeout-bound call that reuses the caching built into the
+    provided *llm* instance. Falls back to direct synchronous execution when no
+    running event-loop is detected.
+    """
+
+    try:
+        loop = asyncio.get_running_loop()
+        if loop and loop.is_running():
+            with concurrent.futures.ThreadPoolExecutor() as executor:
+                future = executor.submit(llm.chat, messages, **kwargs)
+                return future.result(timeout=timeout)
+    except RuntimeError:
+        # Not in an async loop – continue to sync path
+        pass
+
+    # Sync path – no easy timeout handling without threads; call directly
+    return llm.chat(messages, **kwargs)
