@@ -654,6 +654,18 @@ IMPORTANT:
 
         return "\n".join(formatted_lines)
 
+    def _resolve_memory_get_tags(self, text: str) -> str:
+        """Replace <memory_get key="..."/> tags in text with the corresponding memory value."""
+        def replacer(match):
+            key = match.group(1)
+            try:
+                value = self.memory.retrieve(key)
+                return str(value) if value is not None else f"<missing:{key}>"
+            except Exception:
+                return f"<missing:{key}>"
+        pattern = r'<memory_get key="([^"]+)"\s*/>'
+        return re.sub(pattern, replacer, text)
+
     def _create_result(
         self, state: ConversationState, max_iters: int
     ) -> ReasoningResult:
@@ -663,14 +675,23 @@ IMPORTANT:
         if state.is_complete:
             success = True
             final_answer = state.final_answer or "Task completed successfully."
+            # Resolve memory_get tags in the final answer
+            if isinstance(final_answer, str):
+                final_answer = self._resolve_memory_get_tags(final_answer)
             error_message = None
         elif state.error_message:
             success = False
             final_answer = "Task failed due to error."
+            # Resolve memory_get tags in the final answer
+            if isinstance(final_answer, str):
+                final_answer = self._resolve_memory_get_tags(final_answer)
             error_message = state.error_message
         else:
             success = False
             final_answer = "Task incomplete - reached iteration limit."
+            # Resolve memory_get tags in the final answer
+            if isinstance(final_answer, str):
+                final_answer = self._resolve_memory_get_tags(final_answer)
             error_message = f"Reached maximum iterations ({max_iters})"
 
         # Sync state for result creation
