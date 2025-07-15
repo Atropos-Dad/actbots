@@ -28,6 +28,26 @@ MAX_ITERATIONS = 50
 MAX_TOOL_CALLS_PER_TURN = 5
 MAX_CONTEXT_TOKENS = 100000  # Rough estimate for context management
 
+# Practical token budget for modern GPT-4o models (~8k context)
+TARGET_CONTEXT_TOKENS = 8000
+
+# Try to load tiktoken for more accurate counts; otherwise fall back to rough estimate
+try:
+    import tiktoken  # type: ignore
+
+    def _estimate_tokens(text: str, model: str = "gpt-4o") -> int:  # pragma: no cover
+        try:
+            enc = tiktoken.encoding_for_model(model)
+        except Exception:
+            enc = tiktoken.get_encoding("cl100k_base")
+        return len(enc.encode(text))
+
+except ImportError:  # pragma: no cover – tiktoken optional
+
+    def _estimate_tokens(text: str, model: str | None = None) -> int:
+        # Rough heuristic: 1 token ≈ 4 characters for English text
+        return max(1, len(text) // 4)
+
 
 @dataclass
 class ConversationState:
@@ -295,16 +315,34 @@ IMPORTANT:
         self, messages: List[Dict[str, str]]
     ) -> List[Dict[str, str]]:
         """Manage context length by keeping system + recent messages."""
-        if len(messages) <= 20:  # Small conversation, keep all
+        # Always preserve the initial system message
+        system_msg = messages[0] if messages and messages[0]["role"] == "system" else None
+        working = messages[1:] if system_msg else messages[:]
+
+        # Quick path: within budget
+        total_tokens = sum(_estimate_tokens(m["content"], model=self.model) for m in messages)
+        if total_tokens <= TARGET_CONTEXT_TOKENS:
             return messages
 
-        # Keep system message + last 19 messages for a hard cap of 20
-        system_msg = messages[0] if messages[0]["role"] == "system" else None
-        recent_messages = messages[-19:]
+        # Iteratively drop the oldest non-system messages until within budget
+        trimmed: list[Dict[str, str]] = []
+        if system_msg:
+            trimmed.append(system_msg)
 
-        if system_msg and recent_messages[0] != system_msg:
-            return [system_msg] + recent_messages
-        return recent_messages
+        # Start from the most recent messages and work backwards
+        for msg in reversed(working):
+            trimmed.insert(1 if system_msg else 0, msg)  # prepend keeping order
+            total_tokens = sum(_estimate_tokens(m["content"], model=self.model) for m in trimmed)
+            if total_tokens > TARGET_CONTEXT_TOKENS:
+                # Remove the oldest message we just added and break
+                trimmed.pop(1 if system_msg else 0)
+                break
+
+        # As a final safeguard, hard-cut to last 20 messages if still huge
+        if len(trimmed) > 20:
+            trimmed = ([system_msg] if system_msg else []) + trimmed[-19:]
+
+        return trimmed
 
     def _check_completion(self, response: str, state: ConversationState) -> bool:
         """Check if the response indicates task completion."""

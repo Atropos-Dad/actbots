@@ -304,43 +304,51 @@ class BulletPlanReasoner(BaseReasoner):
         """Evaluate if the goal has been completed based on current state."""
         try:
             # Simple heuristic: if plan is empty and we've made progress, goal is likely complete
-            if not state.plan and hasattr(state, 'history') and state.history:
+            if not state.plan and getattr(state, "history", None):
                 return True
-            
+
+            # Build signature of completed steps to detect changes since last evaluation
+            completed_steps = [
+                step.text
+                for step in state.plan
+                if (hasattr(step.status, "name") and step.status.name == "DONE")
+                or step.status == StepStatus.DONE
+            ]
+
+            signature = "|".join(completed_steps)
+            if signature == getattr(self, "_last_goal_eval_signature", ""):
+                # No change → return previously computed result
+                return getattr(self, "_last_goal_eval_result", False)
+
             # Use LLM to evaluate goal completion
-            evaluation_prompt = load_prompt('goal_evaluation')
-            
-            # Build robust evaluation context
-            completed_steps = []
-            for step in state.plan:
-                if hasattr(step.status, 'name') and step.status.name == "DONE":
-                    completed_steps.append(step.text)
-                elif step.status == StepStatus.DONE:
-                    completed_steps.append(step.text)
-            
-            current_observations = []
-            if hasattr(state, 'history') and state.history:
-                current_observations = state.history[-5:]
-            
+            evaluation_prompt = load_prompt("goal_evaluation")
+
+            current_observations = state.history[-5:] if getattr(state, "history", None) else []
+
             evaluation_context = {
-                'goal': state.goal,
-                'completed_steps': completed_steps,
-                'current_observations': current_observations,
-                'total_steps': len(state.plan),
-                'history': current_observations  # Alternative field name
+                "goal": state.goal,
+                "completed_steps": completed_steps,
+                "current_observations": current_observations,
+                "total_steps": len(state.plan),
+                "history": current_observations,  # Alternative field name
             }
-            
+
             if isinstance(evaluation_prompt, dict):
                 evaluation_prompt["inputs"].update(evaluation_context)
                 prompt = json.dumps(evaluation_prompt, ensure_ascii=False)
             else:
                 prompt = evaluation_prompt.format(**evaluation_context)
-            
+
             response = self._safe_llm_call([{"role": "user", "content": prompt}])
-            
-            # Parse response for completion status
-            return 'yes' in response.lower() or 'completed' in response.lower()
-            
+
+            result = "yes" in response.lower() or "completed" in response.lower()
+
+            # Cache outcome
+            self._last_goal_eval_signature = signature
+            self._last_goal_eval_result = result
+
+            return result
+
         except Exception as e:
             self.logger.error(f"Error evaluating goal completion: {e}")
             # Fallback: if plan is empty, assume goal is complete
@@ -383,6 +391,14 @@ class BulletPlanReasoner(BaseReasoner):
                 return inner.success
             return bool(inner)
         return getattr(result, "success", True)
+
+    # ------------------------------------------------------------------
+    # Thin wrapper for legacy calls ------------------------------------
+    # ------------------------------------------------------------------
+
+    def _safe_llm_call(self, messages, **kwargs):  # type: ignore[override]
+        """Maintain backward-compatibility with previous internal calls."""
+        return self.safe_llm_call(messages, **kwargs)
 
     # BaseReasoner compatibility methods
 
