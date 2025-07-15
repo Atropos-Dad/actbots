@@ -6,7 +6,7 @@ import sys
 
 _CONFIG_CACHE: Dict[str, Any] = {}
 
-CONFIG_FILE = Path(__file__).parents[2] / "pyproject.toml"
+CONFIG_FILE = Path(__file__).parents[2] / "config.toml"
 
 
 def _load_config() -> Dict[str, Any]:
@@ -36,7 +36,7 @@ def _load_config() -> Dict[str, Any]:
 
             _CONFIG_CACHE = config
         except Exception as e:
-            raise RuntimeError(f"Failed to load config from pyproject.toml: {e}")
+            raise RuntimeError(f"Failed to load config from config.toml: {e}")
     return _CONFIG_CACHE
 
 
