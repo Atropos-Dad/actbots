@@ -51,7 +51,14 @@ class HybridReasoner:
 
         # Use the same LLM instance for both main reasoning and classification.
         self.llm = llm or LiteLLMChatLLM(model=llm_model)
-        self.classification_llm = self.llm
+
+        # Use a cheaper / faster model for the lightweight complexity classifier.
+        cheap_model = config.get("llm", {}).get("cheap_classifier_model", "gpt-3.5-turbo")
+        try:
+            self.classification_llm = LiteLLMChatLLM(model=cheap_model, temperature=0.0, max_tokens=16)
+        except Exception:
+            # Fallback to main llm if the cheap model is unavailable
+            self.classification_llm = self.llm
 
         self.freeform = FreeformReasoner(
             jentic_client=jentic,

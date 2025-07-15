@@ -8,10 +8,13 @@ from pydantic import BaseModel
 import enum
 import re
 import json
-import os
 
 from ..platform.jentic_client import JenticClient
 from ..memory.base_memory import BaseMemory
+# Import centralised helpers
+from ..utils.async_helpers import safe_llm_call as _global_safe_llm_call
+from ..utils.prompt_loader import load_prompt as _load_prompt
+
 from ..utils.llm import BaseLLM, LiteLLMChatLLM
 from ..communication.hitl.base_intervention_hub import BaseInterventionHub, NoEscalation
 from ..utils.logger import get_logger
@@ -195,31 +198,14 @@ class BaseReasoner(ABC):
     # ========================================================================
     
     def safe_llm_call(self, messages: List[Dict[str, str]], **kwargs) -> str:
+        """Wrapper around the shared *safe_llm_call* utility.
+
+        Centralising the implementation avoids spawning a new ThreadPoolExecutor
+        for every request and ensures consistent timeout behaviour across all
+        components.
         """
-        Call LLM in async-safe way. Prevents Discord bot freezing.
-        """
-        logger = get_logger(__name__)
-        timeout_seconds = kwargs.pop('timeout', 60)  # Default 60 second timeout
-        
-        try:
-            import asyncio
-            loop = asyncio.get_running_loop()
-            if loop.is_running():
-                import concurrent.futures
-                with concurrent.futures.ThreadPoolExecutor() as executor:
-                    future = executor.submit(self.llm.chat, messages, **kwargs)
-                    try:
-                        return future.result(timeout=timeout_seconds)
-                    except concurrent.futures.TimeoutError:
-                        logger.error(f"LLM call timed out after {timeout_seconds} seconds")
-                        raise RuntimeError(f"LLM call timed out after {timeout_seconds} seconds")
-        except RuntimeError:
-            pass
-        
-        # For synchronous calls, we can't easily add timeout without more complex threading
-        # But most timeouts happen in async contexts (Discord)
-        logger.debug("Making synchronous LLM call")
-        return self.llm.chat(messages, **kwargs)
+        timeout_seconds = kwargs.pop("timeout", 60)
+        return _global_safe_llm_call(self.llm, messages, timeout=timeout_seconds, **kwargs)
     
     def execute_tool_safely(self, tool_id: str, params: Dict[str, Any]) -> Dict[str, Any]:
         """
@@ -375,24 +361,14 @@ class BaseReasoner(ABC):
             self.jentic_client.clear_executed_tools()
         logger.debug("Reasoner state reset")
         
-    def load_prompt(self, prompt_name: str) -> str:
-        """Load prompt template from prompts directory with caching."""
-        if prompt_name in self._prompt_cache:
-            return self._prompt_cache[prompt_name]
-            
-        # Get the path to the system_prompts directory
-        current_dir = os.path.dirname(os.path.abspath(__file__))
-        prompts_dir = os.path.join(os.path.dirname(current_dir), "prompts", "system_prompts")
-        prompt_file = os.path.join(prompts_dir, f"{prompt_name}.txt")
-        
-        try:
-            with open(prompt_file, 'r', encoding='utf-8') as f:
-                prompt_template = f.read().strip()
-            self._prompt_cache[prompt_name] = prompt_template
-            return prompt_template
-        except FileNotFoundError as e:
-            logger.error(f"Failed to load prompt '{prompt_name}': {e}")
-            raise RuntimeError(f"Could not load prompt file: {prompt_name}.txt")
+    def load_prompt(self, prompt_name: str):  # type: ignore[override]
+        """Proxy to utils.prompt_loader.load_prompt.
+
+        All caching is handled by *prompt_loader*'s internal LRU cache, so this
+        wrapper simply delegates and keeps the original method signature for
+        downstream compatibility.
+        """
+        return _load_prompt(prompt_name)
 
     # ========================================================================
     # NEW SHARED HIGH-LEVEL HELPERS (deduplicated from concrete reasoners)

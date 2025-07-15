@@ -4,6 +4,7 @@ import json
 from typing import Any, Dict
 
 from ...utils.logger import get_logger
+from ...utils.async_helpers import safe_llm_call as _global_safe_llm_call
 from ...utils.prompt_loader import load_prompt
 from ...utils.parsing_helpers import make_json_serializable
 from .reasoner_state import Step, ReasonerState
@@ -157,19 +158,9 @@ class StepExecutor:
         
         return reasoning_prompt
 
-    def _safe_llm_call(self, messages: Dict[str, str], **kwargs) -> str:
-        """Safe LLM call with async handling."""
-        try:
-            import asyncio
-            loop = asyncio.get_running_loop()
-            if loop.is_running():
-                import concurrent.futures
-                with concurrent.futures.ThreadPoolExecutor() as executor:
-                    future = executor.submit(self.llm.chat, messages, **kwargs)
-                    return future.result()
-        except RuntimeError:
-            pass
-        return self.llm.chat(messages, **kwargs)
+    def _safe_llm_call(self, messages, **kwargs) -> str:  # type: ignore[override]
+        """Thin wrapper around the shared *safe_llm_call* utility."""
+        return _global_safe_llm_call(self.llm, messages, **kwargs)
 
     def _add_human_guidance_to_prompt(self, base_prompt: str) -> str:
         """Add recent human guidance from memory to prompts."""
