@@ -29,6 +29,9 @@ class JenticClient:
         """
         self.api_key = api_key or os.getenv("JENTIC_API_KEY")
         self._tool_metadata_cache: Dict[str, Dict[str, Any]] = {}
+        # In-memory cache for search results (query → list[tool])
+        self._search_cache: Dict[tuple[str, int], List[Dict[str, Any]]] = {}
+        self._search_cache_max = 128
         self._executed_tools: List[Dict[str, Any]] = []  # Track successfully executed tools
 
         # Lazily-import the official Jentic SDK.  We do this here (instead of at
@@ -100,6 +103,11 @@ class JenticClient:
         """
         Async version of search for use in async contexts.
         """
+        cache_key = (query.lower().strip(), top_k)
+        if cache_key in self._search_cache:
+            logger.debug(f"(async) Search cache hit for query='{query}' top_k={top_k}")
+            return list(self._search_cache[cache_key])
+
         logger.info(f"Searching for tools: '{query}' (top {top_k})")
 
         # Build request model for the SDK.
@@ -116,12 +124,26 @@ class JenticClient:
             # Fallback for non-Pydantic objects.
             results_dict = dict(results)
 
-        return self._format_and_cache_search_results(results_dict, top_k)
+        formatted = self._format_and_cache_search_results(results_dict, top_k)
+
+        # Cache store with eviction
+        self._search_cache[cache_key] = formatted
+        if len(self._search_cache) > self._search_cache_max:
+            oldest_key = next(iter(self._search_cache))
+            del self._search_cache[oldest_key]
+
+        return formatted
 
     def search(self, query: str, top_k: int = 5) -> List[Dict[str, Any]]:
         """
         Search for workflows and operations matching a query. Caches metadata for later use.
         """
+        # First, quick check in local cache
+        cache_key = (query.lower().strip(), top_k)
+        if cache_key in self._search_cache:
+            logger.debug(f"Search cache hit for query='{query}' top_k={top_k}")
+            return list(self._search_cache[cache_key])  # return shallow copy
+
         # Check if we're in an async context and use async method if so
         if self._is_async_context():
             logger.info(f"Detected async context, using ThreadPoolExecutor for search: {query}")
@@ -172,7 +194,16 @@ class JenticClient:
             # Fallback for non-Pydantic objects.
             results_dict = dict(results)
 
-        return self._format_and_cache_search_results(results_dict, top_k)
+        formatted = self._format_and_cache_search_results(results_dict, top_k)
+
+        # Update cache (simple LRU eviction)
+        self._search_cache[cache_key] = formatted
+        if len(self._search_cache) > self._search_cache_max:
+            # Remove oldest inserted item (FIFO) for simplicity
+            oldest_key = next(iter(self._search_cache))
+            del self._search_cache[oldest_key]
+
+        return formatted
 
     def _format_and_cache_search_results(
         self, payload: Dict[str, Any], top_k: int
