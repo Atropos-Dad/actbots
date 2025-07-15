@@ -294,17 +294,55 @@ IMPORTANT:
     def _manage_context_length(
         self, messages: List[Dict[str, str]]
     ) -> List[Dict[str, str]]:
-        """Manage context length by keeping system + recent messages."""
-        if len(messages) <= 20:  # Small conversation, keep all
+        """Trim conversation to fit within MAX_CONTEXT_TOKENS budget.
+
+        Uses `tiktoken` when available for accurate token counting; otherwise
+        falls back to an approximate word-to-token heuristic (1 token ≈ 0.75
+        words).
+        """
+
+        # Quick exit for tiny contexts
+        if len(messages) < 6:
             return messages
 
-        # Keep system message + last 19 messages for a hard cap of 20
-        system_msg = messages[0] if messages[0]["role"] == "system" else None
-        recent_messages = messages[-19:]
+        # Helper to count tokens
+        def _count_tokens(msgs: List[Dict[str, str]]) -> int:
+            try:
+                import tiktoken  # type: ignore
 
-        if system_msg and recent_messages[0] != system_msg:
-            return [system_msg] + recent_messages
-        return recent_messages
+                encoding = tiktoken.encoding_for_model(self.model or "gpt-4o")
+                num_tokens = 0
+                for m in msgs:
+                    # Per OpenAI chat format guidelines: 4 tokens per message + tokens in content
+                    num_tokens += 4  # role/name markers etc.
+                    num_tokens += len(encoding.encode(m.get("content", "")))
+                    # Account for role key (system/user/assistant)
+                num_tokens += 2  # priming
+                return num_tokens
+            except Exception:
+                # Approximate: assume 4 chars per token and 5 chars per word
+                chars = sum(len(m.get("content", "")) for m in msgs)
+                return int(chars / 4.0)
+
+        budget = MAX_CONTEXT_TOKENS
+        current_tokens = _count_tokens(messages)
+
+        if current_tokens <= budget:
+            return messages
+
+        # Always preserve the first system prompt
+        preserved: List[Dict[str, str]] = []
+        if messages and messages[0]["role"] == "system":
+            preserved.append(messages[0])
+            working_msgs = messages[1:]
+        else:
+            working_msgs = messages[:]
+
+        # Remove oldest messages until within budget
+        while working_msgs and _count_tokens(preserved + working_msgs) > budget:
+            working_msgs.pop(0)
+
+        return preserved + working_msgs
 
     def _check_completion(self, response: str, state: ConversationState) -> bool:
         """Check if the response indicates task completion."""

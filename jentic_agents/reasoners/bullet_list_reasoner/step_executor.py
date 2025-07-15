@@ -158,18 +158,9 @@ class StepExecutor:
         return reasoning_prompt
 
     def _safe_llm_call(self, messages: Dict[str, str], **kwargs) -> str:
-        """Safe LLM call with async handling."""
-        try:
-            import asyncio
-            loop = asyncio.get_running_loop()
-            if loop.is_running():
-                import concurrent.futures
-                with concurrent.futures.ThreadPoolExecutor() as executor:
-                    future = executor.submit(self.llm.chat, messages, **kwargs)
-                    return future.result()
-        except RuntimeError:
-            pass
-        return self.llm.chat(messages, **kwargs)
+        """Centralized cached LLM call."""
+        from ...utils.llm import safe_llm_call as _safe_call
+        return _safe_call(self.llm, messages, **kwargs)
 
     def _add_human_guidance_to_prompt(self, base_prompt: str) -> str:
         """Add recent human guidance from memory to prompts."""

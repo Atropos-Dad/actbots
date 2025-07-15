@@ -158,18 +158,9 @@ class ParameterGenerator:
         return resolved.get("id", tool_id)
 
     def _safe_llm_call(self, messages: List[Dict[str, str]], **kwargs) -> str:
-        """Safe LLM call with async handling."""
-        try:
-            import asyncio
-            loop = asyncio.get_running_loop()
-            if loop.is_running():
-                import concurrent.futures
-                with concurrent.futures.ThreadPoolExecutor() as executor:
-                    future = executor.submit(self.llm.chat, messages, **kwargs)
-                    return future.result()
-        except RuntimeError:
-            pass
-        return self.llm.chat(messages, **kwargs)
+        """Delegate to shared cached safe_llm_call utility for consistency."""
+        from ...utils.llm import safe_llm_call as _safe_call
+        return _safe_call(self.llm, messages, **kwargs)
 
     def _build_correction_prompt(self, error_type: str, error_details: str, failed_parameters: str, required_fields: List[str]) -> str:
         """Build a correction prompt for parameter validation errors."""
