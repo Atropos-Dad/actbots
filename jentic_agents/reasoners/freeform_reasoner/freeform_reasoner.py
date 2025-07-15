@@ -18,6 +18,30 @@ import re
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional
 
+# ---------------------------------------------------------------------------
+# Pre-compiled regex patterns (performance)
+# ---------------------------------------------------------------------------
+
+TOOL_CALL_RE = re.compile(r'<tool\s+name="([^"\s]+)"\s*>(.*?)</tool>', re.DOTALL)
+MEMORY_GET_RE = re.compile(r'<memory_get\s+key="([^"\s]+)"\s*/>')
+MEMORY_SET_RE = re.compile(r'<memory_set\s+key="([^"\s]+)"\s+value="([^"\s]+)"(?:\s+description="([^"\s]+)")?\s*/>')
+ESCALATE_RE = re.compile(r'<escalate_to_human\s+reason="([^"\s]+)"\s+question="([^"\s]+)"\s*/>')
+
+# Completion keywords regexes (case-insensitive)
+COMPLETION_PATTERNS = [
+    re.compile(r"TASK COMPLETE:", re.IGNORECASE),
+    re.compile(r"GOAL ACHIEVED:", re.IGNORECASE),
+    re.compile(r"COMPLETED:", re.IGNORECASE),
+]
+
+
+# ---------------------------------------------------------------------------
+# Caching for tool catalogue lookups (keyed by goal.lower())
+# ---------------------------------------------------------------------------
+
+_tool_catalogue_cache: Dict[str, str] = {}
+
+
 from ..base_reasoner import BaseReasoner, ReasoningResult
 from ...utils.logger import get_logger
 
@@ -217,16 +241,26 @@ IMPORTANT:
     def _get_tool_catalogue(self, goal: str) -> str:
         """Get a formatted catalogue of available tools based on the goal."""
         logger.info(f"Fetching tool catalogue for goal: '{goal}'")
+
+        cache_key = goal.strip().lower()
+        if cache_key in _tool_catalogue_cache:
+            logger.debug("Using cached tool catalogue for goal '%s'", cache_key)
+            return _tool_catalogue_cache[cache_key]
+
         try:
             # Search for tools relevant to the current goal.
             if not goal.strip():
                 logger.warning("Goal is empty, skipping tool catalogue search.")
-                return "No tools available. Use tool search to find tools."
+                catalogue = "No tools available. Use tool search to find tools."
+                _tool_catalogue_cache[cache_key] = catalogue
+                return catalogue
 
             tools = self.jentic_client.search(goal, top_k=10)
 
             if not tools:
-                return "No tools found for your goal. Use tool search to find other tools."
+                catalogue = "No tools found for your goal. Use tool search to find other tools."
+                _tool_catalogue_cache[cache_key] = catalogue
+                return catalogue
 
             catalogue_lines = []
             for tool in tools:  # Already limited by search
@@ -244,11 +278,17 @@ IMPORTANT:
                 display_name = f"{name} ({api_name})" if api_name else name
                 catalogue_lines.append(f"- {tool_id}: {display_name} - {description}")
 
-            return "\n".join(catalogue_lines)
+            catalogue_lines_str = "\n".join(catalogue_lines)
 
         except Exception as e:
             logger.warning(f"Failed to get tool catalogue: {e}")
-            return "Tool catalogue unavailable."
+            catalogue = "Tool catalogue unavailable."
+            _tool_catalogue_cache[cache_key] = catalogue
+            return catalogue
+
+        # Cache and return successful catalogue
+        _tool_catalogue_cache[cache_key] = catalogue_lines_str
+        return catalogue_lines_str
 
     def _get_memory_summary(self) -> str:
         """Get a summary of current memory contents."""
@@ -346,17 +386,8 @@ IMPORTANT:
 
     def _check_completion(self, response: str, state: ConversationState) -> bool:
         """Check if the response indicates task completion."""
-        completion_patterns = [
-            r"TASK COMPLETE:",
-            r"GOAL ACHIEVED:",
-            r"COMPLETED:",
-        ]
-
         # Check for a completion keyword in the response.
-        has_completion_signal = any(
-            re.search(pattern, response, re.IGNORECASE)
-            for pattern in completion_patterns
-        )
+        has_completion_signal = any(p.search(response) for p in COMPLETION_PATTERNS)
 
         if has_completion_signal:
             # To avoid premature completion, only accept it if at least one tool has been used.
@@ -426,9 +457,7 @@ IMPORTANT:
         """Extract tool calls from <tool name="id">json</tool> tags."""
         tool_calls = []
 
-        # Pattern to match <tool name="tool_id">json_content</tool>
-        pattern = r'<tool\s+name="([^"]+)"\s*>(.*?)</tool>'
-        matches = re.findall(pattern, text, re.DOTALL)
+        matches = TOOL_CALL_RE.findall(text)
 
         for tool_id, json_content in matches:
             try:
@@ -447,14 +476,12 @@ IMPORTANT:
         operations = []
 
         # Extract memory_get operations
-        get_pattern = r'<memory_get\s+key="([^"]+)"\s*/>'
-        get_matches = re.findall(get_pattern, text)
+        get_matches = MEMORY_GET_RE.findall(text)
         for key in get_matches:
             operations.append({"type": "get", "key": key})
 
         # Extract memory_set operations
-        set_pattern = r'<memory_set\s+key="([^"]+)"\s+value="([^"]+)"(?:\s+description="([^"]+)")?\s*/>'
-        set_matches = re.findall(set_pattern, text)
+        set_matches = MEMORY_SET_RE.findall(text)
         for key, value, description in set_matches:
             operations.append(
                 {
@@ -469,9 +496,7 @@ IMPORTANT:
 
     def _extract_escalation_request(self, text: str) -> Optional[Dict[str, str]]:
         """Extract human escalation request from the response."""
-        pattern = r'<escalate_to_human\s+reason="([^"]+)"\s+question="([^"]+)"\s*/>'
-        match = re.search(pattern, text)
-
+        match = ESCALATE_RE.search(text)
         if match:
             return {"reason": match.group(1), "question": match.group(2)}
         return None
