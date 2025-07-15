@@ -14,6 +14,11 @@ logger = get_logger(__name__)
 class ToolSelector:
     """Handles tool search and LLM-based selection for BulletPlanReasoner."""
 
+    # Simple in-process cache to avoid hitting the Jentic service with identical
+    # queries during retries / reflection cycles. Keyed by the raw search query
+    # string and capped implicitly by process lifetime.
+    _search_cache: dict[str, List[Dict[str, Any]]] = {}
+
     def __init__(self, jentic_client, memory, llm, search_top_k: int = 10):
         self.jentic_client = jentic_client
         self.memory = memory
@@ -107,7 +112,16 @@ class ToolSelector:
     def _search_tools(self, query: str) -> List[Dict[str, Any]]:
         """Search for tools using the query."""
         logger.info(f"Search query: {query}")
+
+        # Return cached result if we have it
+        if query in self.__class__._search_cache:
+            logger.debug("Using cached search result for query '%s'", query)
+            return self.__class__._search_cache[query]
+
+        # Otherwise hit the Jentic service and cache the result
         search_hits = self.jentic_client.search(query, top_k=self.search_top_k)
+        self.__class__._search_cache[query] = search_hits
+
         logger.info(f"Found {len(search_hits)} tool candidates")
         return search_hits
 

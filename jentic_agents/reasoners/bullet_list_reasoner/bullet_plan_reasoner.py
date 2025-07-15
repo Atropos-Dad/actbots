@@ -336,7 +336,7 @@ class BulletPlanReasoner(BaseReasoner):
             else:
                 prompt = evaluation_prompt.format(**evaluation_context)
             
-            response = self._safe_llm_call([{"role": "user", "content": prompt}])
+            response = self.safe_llm_call([{"role": "user", "content": prompt}])
             
             # Parse response for completion status
             return 'yes' in response.lower() or 'completed' in response.lower()
@@ -364,7 +364,7 @@ class BulletPlanReasoner(BaseReasoner):
             else:
                 prompt = bullet_plan_prompt.format(**plan_context)
             
-            response = self._safe_llm_call([{"role": "user", "content": prompt}])
+            response = self.safe_llm_call([{"role": "user", "content": prompt}])
             
             return response
             
