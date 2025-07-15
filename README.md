@@ -12,228 +12,260 @@ A **clean, reusable Python library** that lets developers spin up AI agents whos
 ## 🏗️ Architecture
 
 ```
-jentic_agents/
-│
-├─ reasoners/              # Reasoning loop implementations
-│   ├─ base_reasoner.py   # Abstract ReAct contract
-│   └─ standard_reasoner.py # Concrete ReAct + Jentic integration
-│
-├─ agents/                 # Agent orchestration layer
-│   ├─ base_agent.py      # Abstract agent interface
-│   └─ interactive_cli_agent.py # CLI-based agent
-│
-├─ memory/                 # Memory backends
-│   ├─ base_memory.py     # Abstract memory interface
-│   └─ scratch_pad.py     # Simple dict-based memory
-│
-├─ inbox/                  # Goal/task delivery systems
-│   ├─ base_inbox.py      # Abstract inbox interface
-│   └─ cli_inbox.py       # CLI input inbox
-│
-├─ platform/               # External service adapters
-│   └─ jentic_client.py   # Jentic SDK wrapper
-│
-└─ tests/                  # Comprehensive test suite
+├── README.md
+├── docs
+│   ├── dynamic_escalation_system.md
+│   ├── escalation_system.md
+│   └── human_in_the_loop.md
+├── jentic_agents
+│   ├── agents
+│   │   ├── base_agent.py
+│   │   ├── interactive_cli_agent.py
+│   │   └── simple_ui_agent.py
+│   ├── communication
+│   │   ├── controllers
+│   │   │   ├── base_controller.py
+│   │   │   ├── cli_controller.py
+│   │   │   └── discord_controller.py
+│   │   ├── hitl
+│   │   │   ├── base_intervention_hub.py
+│   │   │   ├── cli_intervention_hub.py
+│   │   │   └── discord_intervention_hub.py
+│   │   ├── inbox
+│   │   │   ├── base_inbox.py
+│   │   │   ├── cli_inbox.py
+│   │   │   └── discord_inbox.py
+│   │   └── outbox
+│   │       ├── base_outbox.py
+│   │       ├── cli_outbox.py
+│   │       └── discord_outbox.py
+│   ├── inbox
+│   ├── logs
+│   │   └── actbots.log
+│   ├── memory
+│   │   ├── agent_memory.py
+│   │   ├── base_memory.py
+│   │   └── scratch_pad.py
+│   ├── platform
+│   │   └── jentic_client.py
+│   ├── prompts
+│   │   ├── agent_system_prompt.txt
+│   │   ├── bullet_plan.txt
+│   │   ├── context_analysis.txt
+│   │   ├── goal_evaluation.txt
+│   │   ├── hybrid_classifier.txt
+│   │   ├── keyword_extraction.txt
+│   │   ├── param_correction_prompt.txt
+│   │   ├── param_generation.txt
+│   │   ├── reasoning_prompt.txt
+│   │   ├── reflection_prompt.txt
+│   │   └── select_tool.txt
+│   ├── reasoners
+│   │   ├── base_reasoner.py
+│   │   ├── bullet_list_reasoner
+│   │   │   ├── bullet_plan_reasoner.py
+│   │   │   ├── parameter_generator.py
+│   │   │   ├── plan_parser.py
+│   │   │   ├── reasoner_state.py
+│   │   │   ├── reflection_engine.py
+│   │   │   ├── step_executor.py
+│   │   │   └── tool_selector.py
+│   │   ├── freeform_reasoner
+│   │   │   └── freeform_reasoner.py
+│   │   └── hybrid_reasoner
+│   │       └── hybrid_reasoner.py
+│   ├── tools
+│   └── utils
+│       ├── block_timer.py
+│       ├── config.py
+│       ├── llm.py
+│       ├── logger.py
+│       ├── parsing_helpers.py
+│       ├── prompt_loader.py
+│       └── shared_console.py
+├── main.py
+└── pyproject.toml
 ```
 
 ## 🚀 Quick Start
 
+### Prerequisites
+
+- Python 3.13 or higher
+- [uv](https://docs.astral.sh/uv/) (recommended) for dependency management
+- Jentic platform access (API key required)
+- API key for your chosen LLM provider (OpenAI, Gemini, or Anthropic)
+
 ### Installation
 
-First, ensure you have `uv` installed. You can find installation instructions [here](https://github.com/astral-sh/uv).
+#### Using uv (Recommended)
 
+**macOS/Linux:**
 ```bash
-# Clone the project
+# Install uv if you haven't already
+curl -LsSf https://astral.sh/uv/install.sh | sh
+
+# Clone the repository
 git clone <repository-url>
 cd actbots
 
-# Create the virtual environment and install dependencies
-uv venv && uv pip install -e .
+# Set up virtual environment and install dependencies
+uv venv && source .venv/bin/activate && uv pip install -e .
 ```
 
-### Basic Usage
+**Windows:**
+```powershell
+# Install uv if you haven't already
+powershell -c "irm https://astral.sh/uv/install.ps1 | iex"
 
+# Clone the repository
+git clone <repository-url>
+cd actbots
+
+# Set up virtual environment and install dependencies
+uv venv
+.venv\Scripts\activate
+uv pip install -e .
+```
+
+### Configuration
+
+1. **Create a `.env` file** in the project root:
+```bash
+# Required
+JENTIC_API_KEY=your-jentic-api-key
+
+# Choose one LLM provider
+OPENAI_API_KEY=your-openai-api-key        # If using OpenAI
+GEMINI_API_KEY=your-gemini-api-key        # If using Gemini  
+ANTHROPIC_API_KEY=your-anthropic-api-key  # If using Anthropic
+
+# Optional - for Discord mode
+DISCORD_BOTTOKEN=your-discord-bot-token
+```
+
+2. **Configure your LLM provider** in `pyproject.toml`:
+```toml
+[tool.actbots.llm]
+provider = "gemini"        # or "openai", "anthropic"
+model = "gemini-2.5-flash" # or "gpt-4o", "claude-3-sonnet-20240229", etc.
+```
+
+3. **Configure Discord** (optional) in `pyproject.toml`:
+```toml
+[tool.actbots.discord]
+enabled = true
+target_user_id = 123456789         # Your Discord user ID for escalations
+monitored_channels = [987654321]   # Channel IDs to monitor
+default_channel_id = 987654321     # Default channel for responses
+```
+
+### Running the Application
+
+#### CLI Mode (Default)
+```bash
+python main.py
+# or explicitly
+python main.py --mode cli
+```
+
+#### UI Mode
+```bash
+python main.py --mode ui
+```
+
+#### Discord Bot Mode
+```bash
+python main.py --mode discord
+```
+
+### Programmatic Usage
 ```python
-from jentic_agents.platform.jentic_client import JenticClient
-from jentic_agents.reasoners.bullet_list_reasoner import BulletPlanReasoner
-from jentic_agents.memory.scratch_pad import ScratchPadMemory
-from jentic_agents.communication.inbox.cli_inbox import CLIInbox
-from jentic_agents.communication.escalation import CLIEscalation
 from jentic_agents.agents.interactive_cli_agent import InteractiveCLIAgent
+from jentic_agents.communication.controllers.cli_controller import CLIController
+from jentic_agents.platform.jentic_client import JenticClient
+from jentic_agents.memory.scratch_pad import ScratchPadMemory
 from jentic_agents.utils.llm import LiteLLMChatLLM
+from jentic_agents.reasoners.hybrid_reasoner.hybrid_reasoner import HybridReasoner
 
-# Create components
-jentic_client = JenticClient(api_key="your-key-here")
+# Initialize components
+jentic_client = JenticClient()
 memory = ScratchPadMemory()
-llm = LiteLLMChatLLM(model="gpt-4o")
+llm_wrapper = LiteLLMChatLLM(model="gemini-2.5-flash")
+controller = CLIController()
 
-# Add escalation system for human help
-escalation = CLIEscalation()
-
-reasoner = BulletPlanReasoner(
+# Create reasoner and agent
+reasoner = HybridReasoner(
     jentic=jentic_client,
     memory=memory,
-    llm=llm,
-    escalation=escalation  # Agent can choose to escalate
+    llm=llm_wrapper,
+    intervention_hub=controller.intervention_hub
 )
 
-inbox = CLIInbox()
-
-# Create and run agent
 agent = InteractiveCLIAgent(
     reasoner=reasoner,
     memory=memory,
-    inbox=inbox,
+    controller=controller,
     jentic_client=jentic_client
 )
 
-agent.spin()  # Start the interactive loop
+# Start the agent
+agent.spin()
 ```
 
-### Demo Mode
+## 🔧 Development Setup
 
-Run the included demo to see the system in action with mock data:
-
+### Running Tests
 ```bash
-python demo.py
+# Using uv
+uv run pytest jentic_agents/tests/
+
+# Using pip
+python -m pytest jentic_agents/tests/
 ```
-
-## 🧠 Core Components
-
-### Reasoners
-
-The reasoning layer implements the **ReAct pattern** (plan → select_tool → act → observe → evaluate → reflect):
-
-- **BaseReasoner**: Abstract interface defining the reasoning contract
-- **StandardReasoner**: Concrete implementation using OpenAI + Jentic integration
-
-### Agents
-
-Agents orchestrate the reasoning loop with memory, inbox, and platform components:
-
-- **BaseAgent**: Abstract agent interface with `spin()` main loop
-- **InteractiveCLIAgent**: CLI-based agent for interactive use
-
-### Memory
-
-Pluggable memory backends for storing information across reasoning sessions:
-
-- **BaseMemory**: Simple key-value storage interface
-- **ScratchPadMemory**: In-memory dict-based implementation
-
-### Inbox
-
-Goal delivery systems that feed tasks to agents:
-
-- **BaseInbox**: Stream interface for goals from various sources
-- **CLIInbox**: Interactive command-line goal input
-
-### Escalation
-
-Simple human-in-the-loop system where agents choose when to escalate:
-
-- **BaseEscalation**: Simple interface for requesting human help
-- **CLIEscalation**: CLI-based human escalation
-- **NoEscalation**: Null implementation for autonomous operation
-
-See [Escalation System Documentation](docs/escalation_system.md) for details.
-
-### Platform
-
-External service adapters:
-
-- **JenticClient**: Thin wrapper around jentic-sdk with auth, retries, and logging
-
-## 🧪 Testing
-
-The project includes comprehensive tests with >90% coverage:
-
-```bash
-# Run all tests
-uv run pytest
-
-# Run specific test files
-uv run pytest jentic_agents/tests/test_reasoner.py -v
-
-# Run with coverage
-uv run pytest --cov=jentic_agents
-```
-
-## 🔧 Development
-
-### Project Structure
-
-- **Strict interfaces first**: Abstract base classes with type hints
-- **Dependency isolation**: All dependencies in project-local `.venv`
-- **Single source of truth**: Only `JenticClient` contacts the Jentic SDK
-- **Stateless reasoning**: `BaseReasoner.run()` returns packaged results
-- **Testability**: External calls are injectable for easy mocking
 
 ### Code Quality
-
 ```bash
+# Format code with ruff
+uv run ruff format jentic_agents/
+
+# Type checking
+uv run mypy jentic_agents/
+
 # Linting
-uv run ruff check .
-
-# Type checking (strict mode)
-uv run mypy .
-
-# Auto-fix common issues
-uv run ruff check . --fix
+uv run ruff check jentic_agents/
 ```
 
-### Adding New Components
+### Project Configuration
 
-1. **New Reasoner**: Extend `BaseReasoner` and implement all abstract methods
-2. **New Agent**: Extend `BaseAgent` and override I/O methods
-3. **New Memory**: Extend `BaseMemory` with your storage backend
-4. **New Inbox**: Extend `BaseInbox` for different goal sources
+The project uses `pyproject.toml` for configuration. Key sections include:
 
-## 📊 Testing Criteria
+- `[tool.actbots.llm]` - LLM provider and model settings
+- `[tool.actbots.discord]` - Discord bot configuration
+- `[tool.actbots.logging]` - Logging configuration
+- `[tool.actbots.memory]` - Memory and embedding settings
 
-The project meets the following quality standards:
+## 📝 Usage Examples
 
-1. **Unit Tests**: >90% coverage on core modules
-2. **Error Handling**: Explicit exceptions with debugging context
-3. **Static Quality**: Ruff linting passes, mypy type checking available
-4. **Integration**: Demo script shows end-to-end functionality
-5. **Isolation**: No global dependencies, clean `.venv` usage
+### CLI Agent with Custom Configuration
+```python
+from jentic_agents.utils.config import get_config_value
 
-## 🎪 Demo Results
-
-The demo script successfully demonstrates:
-
-```
-🚀 Starting ActBots Demo
-==================================================
-AI Agent started. Type 'quit' to exit.
-==================================================
-✅ **Answer:** The answer to 2+2 is 4, as confirmed by the echo tool result: Echo: 2+2.
-
-📋 **Used 1 tool(s) in 2 iteration(s):**
-  1. Echo Tool
+# Get configured model from pyproject.toml
+model_name = get_config_value("llm", "model", default="gpt-4o")
+llm_wrapper = LiteLLMChatLLM(model=model_name)
 ```
 
-## ⚠️ Deprecated Features
+### Discord Bot with Monitoring
+```python
+# Discord configuration from pyproject.toml
+discord_user_id = get_config_value("discord", "target_user_id")
+monitored_channels = get_config_value("discord", "monitored_channels", default=[])
+default_channel_id = get_config_value("discord", "default_channel_id", default=None)
+```
 
-### Human-in-the-Loop (HITL) System
-The complex HITL system with automatic triggers has been deprecated in favor of the simpler **Escalation System**. The HITL components (inbox, outbox, intervention hub) are still available but not recommended for new projects.
+## 📚 Documentation
 
-**Migration**: Replace automatic HITL triggers with agent-chosen escalation using `CLIEscalation`.
-
-## 🔮 Future Enhancements
-
-- **Vector Memory**: Add vector database memory backend
-- **Advanced Reasoners**: Implement Reflexion, Tree of Thoughts
-- **More Inboxes**: Slack, REST API, message queue integrations
-- **Real Jentic SDK**: Replace mocks with actual jentic-sdk integration
-- **Web Interface**: Add web-based agent interface
-- **Deployment**: Docker, Kubernetes deployment configurations
-
-## 📝 License
-
-[Add your license here]
-
----
-
-**Built following the ActBots specification for modular, future-proof Jentic-powered autonomous agents.**
+- [Dynamic Escalation System](docs/dynamic_escalation_system.md)
+- [Human-in-the-Loop Guide](docs/human_in_the_loop.md)
+- [Escalation System Overview](docs/escalation_system.md)
