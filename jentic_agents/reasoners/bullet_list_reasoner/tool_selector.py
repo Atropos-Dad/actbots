@@ -4,6 +4,7 @@ import json
 import re
 from typing import Any, Dict, List, Optional
 
+import logging
 from ...utils.logger import get_logger
 from ...utils.async_helpers import safe_llm_call as _global_safe_llm_call
 from ...utils.prompt_loader import load_prompt
@@ -137,7 +138,8 @@ class ToolSelector:
         # Build numbered candidate list
         numbered_lines = self._build_candidate_list(hits)
         candidate_block = "\n".join(numbered_lines)
-        logger.info(f"Tools returned from keyword search:\n{candidate_block}")
+        if logger.isEnabledFor(__import__("logging").DEBUG):
+            logger.debug(f"Tools returned from keyword search:\n{candidate_block}")
 
         # Fill the prompt
         prompt = self._build_selection_prompt(step, state, candidate_block, hits)

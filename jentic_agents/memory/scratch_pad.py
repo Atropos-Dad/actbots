@@ -44,6 +44,8 @@ class ScratchPadMemory(BaseMemory):
         """Initialize empty scratch pad memory."""
         self._storage: dict[str, Any] = {}  # Simple key-value storage
         self._store: Dict[str, MemoryItem] = {}  # Enhanced memory items
+        # Cache for resolved placeholders (dotted path → string representation)
+        self._placeholder_cache: Dict[str, str] = {}
 
     # ---------- BaseMemory interface ----------
 
@@ -56,6 +58,7 @@ class ScratchPadMemory(BaseMemory):
             value: Data to store
         """
         self._storage[key] = value
+        self._placeholder_cache.clear()  # invalidate cache
 
     def retrieve(self, key: str) -> Optional[Any]:
         """
@@ -89,6 +92,9 @@ class ScratchPadMemory(BaseMemory):
         if deleted_enhanced:
             del self._store[key]
 
+        if deleted_simple or deleted_enhanced:
+            self._placeholder_cache.clear()
+
         return deleted_simple or deleted_enhanced
 
     def clear(self) -> None:
@@ -97,6 +103,7 @@ class ScratchPadMemory(BaseMemory):
         """
         self._storage.clear()
         self._store.clear()
+        self._placeholder_cache.clear()
 
     def keys(self) -> list[str]:
         """
@@ -274,6 +281,10 @@ class ScratchPadMemory(BaseMemory):
         Returns:
             String representation of the looked up value
         """
+        # Shortcut – cached value
+        if dotted_path in self._placeholder_cache:
+            return self._placeholder_cache[dotted_path]
+
         # Use a regex to split the path into keys and indices
         path_parts = re.split(r'\.|\[|\]', dotted_path)
         path_parts = [p for p in path_parts if p]  # Remove empty strings
@@ -309,9 +320,11 @@ class ScratchPadMemory(BaseMemory):
                 raise KeyError(f"Path '{dotted_path}' could not be resolved at part '{part}'")
 
         # Safely stringify the final result
-        if isinstance(current, str):
-            return current
         try:
-            return json.dumps(current)
+            resolved_str = json.dumps(current)
         except (TypeError, ValueError):
-            return str(current)
+            resolved_str = str(current)
+
+        # Cache and return
+        self._placeholder_cache[dotted_path] = resolved_str
+        return resolved_str
